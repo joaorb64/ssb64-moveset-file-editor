@@ -1,0 +1,52 @@
+name: Build the application
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Generate EXE
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["windows-latest"]
+    needs:
+      - locale_build
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+        id: extract_branch
+
+      - run: pip install -r requirements.txt pyinstaller==5.12.0
+      - run: |
+          set PYTHONUTF8=1
+          chcp 65001
+          set PYTHONIOENCODING=utf-8
+          pyinstaller --hidden-import PyQt6.QtCore --hidden-import PyQt6.QtGui --hidden-import PyQt6.QtWidgets --hidden-import=loguru --hidden-import=engineio.async_drivers.threading Main.py --onefile -w
+          copy dist\Main.exe Main.exe
+
+      - run: git pull
+      - name: commit files
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add Main.exe
+          git commit -m "Update exe" -a
+
+      - name: push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ steps.extract_branch.outputs.branch }}

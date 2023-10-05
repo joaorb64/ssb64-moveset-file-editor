@@ -169,6 +169,11 @@ class BinaryFileViewer(QMainWindow):
 
         self.tree.model().dataChanged.connect(self.export_data)
 
+        self.binary_text.setAcceptRichText(True)
+        fnt = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        fnt.setBold(True)
+        self.binary_text.setFont(fnt)
+
         self.binary_text.setText(
             "bc0000030800000498787c00003c0000000000000000000008000010500000000c01c23000b40000000000005a46400300400f000c81e23000f00032000000005a46400300400f0098004c0000000000ff6a0000000000004c000029040000051800000000000000")
 
@@ -261,6 +266,10 @@ class BinaryFileViewer(QMainWindow):
             print(item.data().ToHex())
             finalStr += item.data().ToHex()
         print(finalStr)
+
+        self.binary_text.blockSignals(True)
+        self.binary_text.setText(finalStr)
+        self.binary_text.blockSignals(False)
 
     def parse_moveset_file(moveset: str):
         commands = []
