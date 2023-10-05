@@ -15,8 +15,6 @@ jobs:
       fail-fast: false
       matrix:
         os: ["windows-latest"]
-    needs:
-      - locale_build
 
     steps:
       - uses: actions/checkout@v3
