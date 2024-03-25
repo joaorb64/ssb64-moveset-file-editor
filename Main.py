@@ -175,7 +175,7 @@ class BinaryFileViewer(QMainWindow):
         self.binary_text.setFont(fnt)
 
         self.binary_text.setText(
-            "bc0000030800000498787c00003c0000000000000000000008000010500000000c01c23000b40000000000005a46400300400f000c81e23000f00032000000005a46400300400f0098004c0000000000ff6a0000000000004c000029040000051800000000000000")
+            "bc0000030800000498787c00003c0000000000000000000008000010500000000c01c23000b4000000000000e986400300400f000c81e23000f00032000000005a46400300400f0098004c0000000000ff6a0000000000004c000029040000051800000000000000")
 
     def move_command_up(self):
         selected_index = self.tree.selectionModel().currentIndex()
@@ -294,7 +294,7 @@ def main():
     app = QApplication(sys.argv)
     viewer = BinaryFileViewer()
     viewer.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == '__main__':

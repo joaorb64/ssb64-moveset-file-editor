@@ -32,7 +32,7 @@ class BASE_TYPE(ABC):
 class SIGNED_INT(BASE_TYPE):
     def SetValue(self, value) -> None:
         if value >= 32768:
-            self.value = int(value-65536)
+            self.value = int(value-65535)
         else:
             self.value = int(value)
 
@@ -44,15 +44,30 @@ class SIGNED_INT(BASE_TYPE):
     # self.value = int(value)
 
     def GetValue(self) -> int:
-        if self.value < 0:
-            return int(self.value + (1 << 8))
+        return int(self.value)
+
+
+class SIGNED_INT3(BASE_TYPE):
+    def SetValue(self, value) -> None:
+        if value >= 512:
+            self.value = int(value-1023)
         else:
-            return int(self.value)
+            self.value = int(value)
+
+    # value %= 1 << 8
+
+    # if value >= (1 << 7):
+    #     value -= 1 << 8
+
+    # self.value = int(value)
+
+    def GetValue(self) -> int:
+        return int(self.value)
 
 
 class UNSIGNED_INT(BASE_TYPE):
     def SetValue(self, value) -> None:
-        self.value = int(max(0, min(value, 65536)))
+        self.value = int(max(0, min(value, 4294967295)))
 
 
 class HURTBOX_STATE(UNSIGNED_INT):
@@ -121,6 +136,13 @@ class CONTOUR_STATE(UNSIGNED_INT):
     }
 
 
+class SWORD_TRAIL(UNSIGNED_INT):
+    template = {
+        "LINK": 0,
+        "END": 262143
+    }
+
+
 class GFX(UNSIGNED_INT):
     template = {
         "FOOTSTEP SMOKE": 11,
@@ -160,7 +182,14 @@ def LoadRemixStuff():
     for match in re.findall(pattern, buildlog):
         GFX.template[match[1]] = int(match[0], 16)
 
-    print("MATCH", match)
+    # SWORD TRAILS
+    pattern = re.compile(
+        "Added Sword Trail: (\w+) - Moveset command is (.*)\n")
+
+    for match in re.findall(pattern, buildlog):
+        SWORD_TRAIL.template[match[0]] = int(match[1][4:], 16)
+
+    # print("MATCH", match)
 
 
 LoadRemixStuff()

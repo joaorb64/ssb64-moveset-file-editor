@@ -44,7 +44,7 @@ class HITBOX(BaseCommand):
     base_knockback: DataType.UNSIGNED_INT
     fixed_knockback: DataType.UNSIGNED_INT
     knockback_scaling: DataType.UNSIGNED_INT
-    angle: DataType.UNSIGNED_INT
+    angle: DataType.SIGNED_INT3
     bone: DataType.UNSIGNED_INT
     x: DataType.SIGNED_INT
     y: DataType.SIGNED_INT
@@ -75,8 +75,11 @@ class HITBOX(BaseCommand):
             (get_hex(_hex, 15) + ((get_hex(_hex, 14) << 8) & 0xFFF)) / 4)
         self.knockback_scaling = DataType.UNSIGNED_INT(((get_hex(_hex, 14) >> 4) & 0xF) +
                                                        ((get_hex(_hex, 13) << 4) & 0xFF))
-        self.angle = DataType.UNSIGNED_INT(((get_hex(_hex, 12) << 4) +
-                                            (get_hex(_hex, 13) >> 4)) / 4)
+
+        self.angle = DataType.SIGNED_INT3(
+            (get_hex(_hex, 12) << 2) +
+            ((get_hex(_hex, 13) >> 2) & 0xF)
+        )
 
         self.bone = DataType.UNSIGNED_INT((((get_hex(_hex, 1) << 4) & 0xFF) +
                                            (get_hex(_hex, 2) >> 4)) / 2)
@@ -133,7 +136,7 @@ class HITBOX(BaseCommand):
         print(f'{hex(out_hex)[2:]:0>8}')
 
         ''' 8-digit block '''
-        out_hex = self.angle.value << 22  # Angle
+        out_hex = (self.angle.GetValue() * 4 << 20) & 0xFFF00000  # Angle
         out_hex += self.knockback_scaling.value << 12  # Knockback Scaling
         out_hex += self.fixed_knockback.value * 4  # Fixed knocback
         out_hex += self.hit_grounded_targets.value * 2  # Grounded targets
@@ -260,6 +263,21 @@ class SET_SLOPE_CONTOUR_STATE(BaseCommand):
         return self._hex[0:2]+f'{(hex(self.state.value)[2:]):0>6}'
 
 
+class SWORD_TRAIL(BaseCommand):
+    command_name = "Sword trail"
+    command_size = 8
+
+    command: DataType.SWORD_TRAIL
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.command = DataType.SWORD_TRAIL(get_hex(_hex, 1, 3))
+        print("Command:", _hex, get_hex(_hex, 1, 3), self.command.value)
+
+    def ToHex(self):
+        return self._hex[0:2]+f'{(hex(self.command.value)[2:]):0>6}'
+
+
 class GFX(BaseCommand):
     command_name = "GFX"
     command_size = 32
@@ -291,10 +309,11 @@ class GFX(BaseCommand):
         self.z1 = DataType.SIGNED_INT(int(_hex[16:20], 16))
         self.x2 = DataType.SIGNED_INT(int(_hex[20:24], 16))
         self.y2 = DataType.SIGNED_INT(int(_hex[24:28], 16))
-        self.z2 = DataType.SIGNED_INT(int(_hex[28:32], 16))
+        self.z2 = DataType.SIGNED_INT(int(_hex[28:31], 16))
 
     def ToHex(self):
-        return self._hex[0:2]+f'{(hex(self.effect.value)[2:]):0>6}'
+        return self._hex
+        # return self._hex[0:2]+f'{(hex(self.effect.value)[2:]):0>6}'
 
 
 COMMANDS = {
@@ -352,7 +371,7 @@ COMMANDS = {
     #     "C0": ("ftScriptEvent_Kind_HideItem", "[48]"),
     #     "C4": ("ftScriptEvent_Kind_MakeRumble", "[49]"),
     #     "C8": ("ftScriptEvent_Kind_StopRumble", "[50]"),
-    #     "CC": ("ftScriptEvent_Kind_AfterImage", "Sword Trail"),
+    "CC": SWORD_TRAIL,
     #     "D0": ("", "52"),
     #     "D4": ("", "53"),
     #     "D8": ("", "54"),
