@@ -294,6 +294,11 @@ def main():
     app = QApplication(sys.argv)
     viewer = BinaryFileViewer()
     viewer.show()
+
+    res = DataType.LoadRemixStuff()
+    if res == False:
+        QMessageBox.warning(viewer, "Warning", "There's no output.log file in the program's folder. Build Remix redirecting the output to a text file and put it in this program's directory. It will be used to load additional Remix IDs for SFX, GFX, Damage Types, Sword Trails, etc.")
+
     sys.exit(app.exec())
 
 
