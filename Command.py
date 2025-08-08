@@ -274,6 +274,74 @@ class SWORD_TRAIL(BaseCommand):
     def ToHex(self):
         return self._hex[0:2]+f'{(hex(self.command.value)[2:]):0>6}'
 
+class SET_FRAME_SPEED_MULTIPLIER(BaseCommand):
+    command_name = "Set Frame Speed multiplier (Remix)"
+    command_size = 8
+
+    speed_flag: DataType.UNSIGNED_INT
+    fsm: DataType.FLOAT32
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.speed_flag = DataType.UNSIGNED_INT(bytes.fromhex(_hex[2:4]))
+        # Pega 2 bytes big endian + completa com 2 bytes zeros no final
+        fsm_bytes = bytes.fromhex(_hex[4:8]) + b'\x00\x00'
+        self.fsm = DataType.FLOAT32(fsm_bytes)
+
+    def ToHex(self):
+        sf_hex = f"{self.speed_flag.GetValue():02X}"
+        fsm_bytes = self.fsm.ToBytes()
+        # Pega só os 2 bytes mais significativos (os 2 primeiros bytes)
+        fsm_hex = fsm_bytes[:2].hex().upper()
+        return self._hex[0:2] + sf_hex + fsm_hex
+
+class SET_ARMOR(BaseCommand):
+    command_name = "SET_ARMOR"
+    command_size = 8
+
+class OVERRIDE_HITBOX_DIRECTION(BaseCommand):
+    command_name = "OVERRIDE_HITBOX_DIRECTION"
+    command_size = 8
+
+class TOPJOINT_TRANSLATION_MULTI(BaseCommand):
+    command_name = "TOPJOINT_TRANSLATION_MULTI"
+    command_size = 8
+
+class SET_Y_VEL(BaseCommand):
+    command_name = "SET_Y_VEL"
+    command_size = 8
+
+class FAST_FALL(BaseCommand):
+    command_name = "FAST_FALL"
+    command_size = 8
+
+class RANDOM_SFX(BaseCommand):
+    command_name = "RANDOM_SFX"
+    command_size = 8
+
+class SET_KINETIC_STATE(BaseCommand):
+    command_name = "SET_KINETIC_STATE"
+    command_size = 8
+
+class SET_HITBOX_FGM(BaseCommand):
+    command_name = "SET_HITBOX_FGM"
+    command_size = 8
+
+class SET_ENV_COLOR(BaseCommand):
+    command_name = "SET_ENV_COLOR"
+    command_size = 8
+
+class SWITCH_DIRECTION(BaseCommand):
+    command_name = "SWITCH_DIRECTION"
+    command_size = 8
+
+class GO_TO_MOVESET_FILE(BaseCommand):
+    command_name = "GO_TO_MOVESET_FILE"
+    command_size = 8
+
+class L_VOICE_SFX(BaseCommand):
+    command_name = "L_VOICE_SFX"
+    command_size = 8
 
 class GFX(BaseCommand):
     command_name = "GFX"
@@ -381,6 +449,19 @@ COMMANDS = {
     #     "F4": ("", "61"),
     #     "F8": ("", "62"),
     #     "FF": ("", "63"),
+    "D0": SET_FRAME_SPEED_MULTIPLIER,
+    "D1": SET_ARMOR,
+    "D2": OVERRIDE_HITBOX_DIRECTION,
+    "D3": TOPJOINT_TRANSLATION_MULTI,
+    "D4": SET_Y_VEL,
+    "D5": FAST_FALL,
+    "D6": RANDOM_SFX,
+    "D7": SET_KINETIC_STATE,
+    "D8": SET_HITBOX_FGM,
+    "D9": SET_ENV_COLOR,
+    "DA": SWITCH_DIRECTION,
+    "DB": GO_TO_MOVESET_FILE,
+    "DC": L_VOICE_SFX
 }
 
 

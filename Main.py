@@ -4,6 +4,8 @@ from PySide6.QtGui import *
 from PySide6.QtCore import *
 import traceback
 
+QLocale.setDefault(QLocale(QLocale.C))
+
 from typing import NamedTuple, Dict, List
 from enum import Enum, auto
 from dataclasses import dataclass
@@ -28,6 +30,9 @@ class CustomDelegate(QItemDelegate):
             for k, v in attr.template.items():
                 editor.addItem(k, v)
             editor.setEditable(True)
+        elif isinstance(attr, DataType.FLOAT32):
+            editor: QDoubleSpinBox = QDoubleSpinBox(parent)
+            editor.setRange(-65535, 65535)
         else:
             editor: QSpinBox = QSpinBox(parent)
             editor.setRange(-65535, 65535)
@@ -40,6 +45,8 @@ class CustomDelegate(QItemDelegate):
             editor.setText(item.text())
         elif isinstance(editor, QSpinBox):
             editor.setValue(int(item.text()))
+        elif isinstance(editor, QDoubleSpinBox):
+            editor.setValue(float(item.text()))
         elif isinstance(editor, QComboBox):
             editor.setCurrentText(editor.currentText())
         else:
@@ -52,6 +59,9 @@ class CustomDelegate(QItemDelegate):
         print("Edit", editor, attr)
 
         if isinstance(editor, QSpinBox):
+            attr.SetValue(editor.value())
+            item.setText(editor.text())
+        elif isinstance(editor, QDoubleSpinBox):
             attr.SetValue(editor.value())
             item.setText(editor.text())
         elif isinstance(editor, QComboBox):

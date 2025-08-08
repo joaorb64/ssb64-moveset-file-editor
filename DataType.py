@@ -3,7 +3,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import re
-
+import struct
 
 class BASE_TYPE(ABC):
     value: int = 0
@@ -64,7 +64,24 @@ class UNSIGNED_INT(BASE_TYPE):
             self.value = int.from_bytes(value, byteorder="little", signed=False)
         else:
             self.value = int(max(0, min(value, 4294967295)))
+    
+    def GetValue(self):
+        return self.value
 
+class FLOAT32(BASE_TYPE):
+    def SetValue(self, value) -> None:
+        if isinstance(value, bytes):
+            if len(value) != 4:
+                raise ValueError("FLOAT32 requires exactly 4 bytes")
+            self.value = struct.unpack('>f', value)[0]  # big endian
+        else:
+            self.value = float(value)
+
+    def GetValue(self) -> float:
+        return float(self.value)
+
+    def ToBytes(self) -> bytes:
+        return struct.pack('>f', float(self.value))  # big endian
 
 class HURTBOX_STATE(UNSIGNED_INT):
     template = {
