@@ -77,8 +77,8 @@ class HITBOX(BaseCommand):
                                                        ((get_hex(_hex, 13) << 4) & 0xFF))
 
         self.angle = DataType.SIGNED_INT3(
-            (get_hex(_hex, 12) << 2) +
-            ((get_hex(_hex, 13) >> 2) & 0xF)
+            ((get_hex(_hex, 12) << 4) +
+            (get_hex(_hex, 13) >> 4)) / 4
         )
 
         self.bone = DataType.UNSIGNED_INT((((get_hex(_hex, 1) << 4) & 0xFF) +
@@ -136,7 +136,7 @@ class HITBOX(BaseCommand):
         print(f'{hex(out_hex)[2:]:0>8}')
 
         ''' 8-digit block '''
-        out_hex = (self.angle.GetValue() * 4 << 20) & 0xFFF00000  # Angle
+        out_hex = (self.angle.GetValue() << 22) & 0xFFF00000  # Angle
         out_hex += self.knockback_scaling.value << 12  # Knockback Scaling
         out_hex += self.fixed_knockback.value * 4  # Fixed knocback
         out_hex += self.hit_grounded_targets.value * 2  # Grounded targets
@@ -151,9 +151,6 @@ class HITBOX(BaseCommand):
         out_hex += (self.sound_type.value * 2) << 16  # Sound type
 
         bkb = self.base_knockback.value
-        if (bkb > 0):
-            bkb += 1
-
         out_hex += ((bkb * 8) << 4)  # Base Knockback
 
         output += f'{hex(out_hex)[2:]:0>8}'

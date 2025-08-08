@@ -19,9 +19,9 @@ class BASE_TYPE(ABC):
     def GetLabel(self):
         if self.template is not None:
             try:
-                id = list(self.template.values()).index(self.value)
-                return list(self.template.keys())[id]
-            except:
+                idx = list(self.template.values()).index(self.value)
+                return list(self.template.keys())[idx]
+            except ValueError:
                 return str(self.value)
 
     def GetLabelValue(self, label):
@@ -30,44 +30,40 @@ class BASE_TYPE(ABC):
 
 
 class SIGNED_INT(BASE_TYPE):
+    """Example for 2-byte signed int"""
     def SetValue(self, value) -> None:
-        if value >= 32768:
-            self.value = int(value-65535)
+        if isinstance(value, bytes):
+            self.value = int.from_bytes(value, byteorder="little", signed=True)
         else:
             self.value = int(value)
-
-    # value %= 1 << 8
-
-    # if value >= (1 << 7):
-    #     value -= 1 << 8
-
-    # self.value = int(value)
 
     def GetValue(self) -> int:
         return int(self.value)
 
 
 class SIGNED_INT3(BASE_TYPE):
+    """Example for 10-bit signed int (packed in 2 bytes)"""
     def SetValue(self, value) -> None:
-        if value >= 512:
-            self.value = int(value-1023)
+        if isinstance(value, bytes):
+            raw = int.from_bytes(value, byteorder="little", signed=False)
+            self.value = raw
         else:
             self.value = int(value)
-
-    # value %= 1 << 8
-
-    # if value >= (1 << 7):
-    #     value -= 1 << 8
-
-    # self.value = int(value)
+        
+        if self.value >= 512:
+            self.value = -(1024 - self.value)
 
     def GetValue(self) -> int:
         return int(self.value)
 
 
 class UNSIGNED_INT(BASE_TYPE):
+    """Example for 4-byte unsigned int"""
     def SetValue(self, value) -> None:
-        self.value = int(max(0, min(value, 4294967295)))
+        if isinstance(value, bytes):
+            self.value = int.from_bytes(value, byteorder="little", signed=False)
+        else:
+            self.value = int(max(0, min(value, 4294967295)))
 
 
 class HURTBOX_STATE(UNSIGNED_INT):
