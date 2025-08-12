@@ -33,9 +33,12 @@ class SIGNED_INT(BASE_TYPE):
     """Example for 2-byte signed int"""
     def SetValue(self, value) -> None:
         if isinstance(value, bytes):
-            self.value = int.from_bytes(value, byteorder="little", signed=True)
+            self.value = int.from_bytes(value, byteorder="little", signed=False)
         else:
             self.value = int(value)
+        
+        if self.value >= 0x8000:
+            self.value = -(0xFFFF - self.value)
 
     def GetValue(self) -> int:
         return int(self.value)
@@ -51,7 +54,7 @@ class SIGNED_INT3(BASE_TYPE):
             self.value = int(value)
         
         if self.value >= 512:
-            self.value = -(1024 - self.value)
+            self.value = -(1024 - 1 - self.value)
 
     def GetValue(self) -> int:
         return int(self.value)
