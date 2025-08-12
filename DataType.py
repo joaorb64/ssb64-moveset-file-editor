@@ -54,7 +54,7 @@ class SIGNED_INT3(BASE_TYPE):
             self.value = int(value)
         
         if self.value >= 512:
-            self.value = -(1024 - 1 - self.value)
+            self.value = -(1024 - self.value)
 
     def GetValue(self) -> int:
         return int(self.value)
