@@ -78,7 +78,7 @@ class HITBOX(BaseCommand):
 
         self.angle = DataType.SIGNED_INT3(
             ((get_hex(_hex, 12) << 4) +
-            (get_hex(_hex, 13) >> 4)) / 4
+             (get_hex(_hex, 13) >> 4)) / 4
         )
 
         self.bone = DataType.UNSIGNED_INT((((get_hex(_hex, 1) << 4) & 0xFF) +
@@ -185,6 +185,24 @@ class WAIT(BaseCommand):
         return self._hex[0:2]+f'{(hex(self.time.value)[2:]):0>6}'
 
 
+class LOOP_START(BaseCommand):
+    command_name = "Loop Start"
+
+    iterations: DataType.UNSIGNED_INT
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.iterations = DataType.UNSIGNED_INT(get_hex(_hex, 2, 2))
+
+    def ToHex(self):
+        return self._hex[0:2]+f'{(hex(self.iterations.value)[2:]):0>6}'
+
+
+class LOOP_END(BaseCommand):
+    command_name = "Loop End"
+    command_size = 8
+
+
 class END_HITBOX(BaseCommand):
     command_name = "End Hitboxes"
     command_size = 8
@@ -232,6 +250,20 @@ class SET_SPECIFIC_HURTBOX_STATE(BaseCommand):
         return self._hex[0:2]+part+"00"+state
 
 
+class PLAY_SFX(BaseCommand):
+    command_name = "Play SFX"
+    command_size = 8
+
+    sfx: DataType.SFX
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.sfx = DataType.SFX(get_hex(_hex, 2, 2))
+
+    def ToHex(self):
+        return self._hex[0:2]+f'{(hex(self.sfx.value)[2:]):0>6}'
+
+
 class VOICE_SFX(BaseCommand):
     command_name = "Voice SFX"
     command_size = 8
@@ -274,6 +306,7 @@ class SWORD_TRAIL(BaseCommand):
     def ToHex(self):
         return self._hex[0:2]+f'{(hex(self.command.value)[2:]):0>6}'
 
+
 class SET_FRAME_SPEED_MULTIPLIER(BaseCommand):
     command_name = "Set Frame Speed multiplier (Remix)"
     command_size = 8
@@ -295,53 +328,66 @@ class SET_FRAME_SPEED_MULTIPLIER(BaseCommand):
         fsm_hex = fsm_bytes[:2].hex().upper()
         return self._hex[0:2] + sf_hex + fsm_hex
 
+
 class SET_ARMOR(BaseCommand):
     command_name = "SET_ARMOR"
     command_size = 8
+
 
 class OVERRIDE_HITBOX_DIRECTION(BaseCommand):
     command_name = "OVERRIDE_HITBOX_DIRECTION"
     command_size = 8
 
+
 class TOPJOINT_TRANSLATION_MULTI(BaseCommand):
     command_name = "TOPJOINT_TRANSLATION_MULTI"
     command_size = 8
+
 
 class SET_Y_VEL(BaseCommand):
     command_name = "SET_Y_VEL"
     command_size = 8
 
+
 class FAST_FALL(BaseCommand):
     command_name = "FAST_FALL"
     command_size = 8
+
 
 class RANDOM_SFX(BaseCommand):
     command_name = "RANDOM_SFX"
     command_size = 8
 
+
 class SET_KINETIC_STATE(BaseCommand):
     command_name = "SET_KINETIC_STATE"
     command_size = 8
+
 
 class SET_HITBOX_FGM(BaseCommand):
     command_name = "SET_HITBOX_FGM"
     command_size = 8
 
+
 class SET_ENV_COLOR(BaseCommand):
     command_name = "SET_ENV_COLOR"
     command_size = 8
+
 
 class SWITCH_DIRECTION(BaseCommand):
     command_name = "SWITCH_DIRECTION"
     command_size = 8
 
+
 class GO_TO_MOVESET_FILE(BaseCommand):
     command_name = "GO_TO_MOVESET_FILE"
     command_size = 8
 
+
 class L_VOICE_SFX(BaseCommand):
     command_name = "L_VOICE_SFX"
     command_size = 8
+
 
 class GFX(BaseCommand):
     command_name = "GFX"
@@ -398,7 +444,7 @@ COMMANDS = {
     #     "2C": ("ftScriptEvent_Kind_RefreshHit", "Revive Hitbox"),
     #     "30": ("ftScriptEvent_Kind_SetFighterThrow", "Throw Data"),
     #     "34": ("ftScriptEvent_Kind_SubroutineThrown", "Subroutine? [13]"),
-    #     "38": ("ftScriptEvent_Kind_PlaySFX", "SFX [14]"),
+    "38": PLAY_SFX,
     #     "3c": ("ftScriptEvent_Kind_PlayLoopSFXStoreInfo", "[15]"),
     #     "40": ("ftScriptEvent_Kind_StopLoopSFX", "[16]"),
     "44": VOICE_SFX,
@@ -416,8 +462,8 @@ COMMANDS = {
     #     "74": ("ftScriptEvent_Kind_SetHitStatusAll", "Set Hurtbox State"),
     #     "78": ("ftScriptEvent_Kind_ResetHurtAll", "Reset Hurtbox Sizes?"),
     #     "7C": ("ftScriptEvent_Kind_SetHurtPart", "Set Hurtbox Size?"),
-    #     "80": ("ftScriptEvent_Kind_LoopBegin", "Begin Loop"),
-    #     "84": ("ftScriptEvent_Kind_LoopEnd", "End Loop"),
+    "80": LOOP_START,
+    "84": LOOP_END,
     #     "88": ("ftScriptEvent_Kind_Subroutine", "Subroutine"),
     #     "8C": ("ftScriptEvent_Kind_Return", "Return"),
     #     "90": ("ftScriptEvent_Kind_Goto", "Goto"),
