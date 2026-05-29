@@ -26,7 +26,7 @@ class BASE_TYPE(ABC):
 
     def GetLabelValue(self, label):
         if self.template is not None:
-            return self.template.get(label, 0)
+            return self.template.get(label, None)
 
 
 class SIGNED_INT(BASE_TYPE):

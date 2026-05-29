@@ -36,7 +36,7 @@ SELECTED_FG = "#ffffff"
 
 # Short field names to show in tree parent row and tooltip header.
 SUMMARY_FIELDS = {
-    "HITBOX":                    ["damage", "base_knockback", "angle"],
+    "HITBOX":                    ["damage", "angle"],
     "WAIT":                      ["time"],
     "AFTER":                     ["time"],
     "LOOP_START":                ["iterations"],
@@ -102,8 +102,10 @@ class HexTextEdit(QTextEdit):
         super().focusInEvent(event)
         self.display_mode = False
         raw = ''.join(c for c in self.toPlainText() if c in '0123456789abcdefABCDEF').upper()
+        # Show with a space every 8 chars for readability; _get_raw_hex strips them back out
+        spaced = ' '.join(raw[i:i+8] for i in range(0, len(raw), 8))
         self.blockSignals(True)
-        self.setPlainText(raw)
+        self.setPlainText(spaced)
         self.blockSignals(False)
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -112,6 +114,20 @@ class HexTextEdit(QTextEdit):
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
         self.editingFinished.emit()
+
+
+def _parse_number(text: str):
+    """Parse a user-typed number: decimal, 0x hex, or bare hex (e.g. '1A').
+    Returns an int or None if unparseable."""
+    t = text.strip()
+    try:
+        return int(t, 0)       # handles 0x prefix and plain decimal
+    except ValueError:
+        pass
+    try:
+        return int(t, 16)      # bare hex without 0x, e.g. "1A" or "FF"
+    except ValueError:
+        return None
 
 
 class CustomDelegate(QItemDelegate):
@@ -161,8 +177,16 @@ class CustomDelegate(QItemDelegate):
             attr.SetValue(editor.value())
             item.setText(str(editor.value()))
         elif isinstance(editor, QComboBox):
-            item.setText(editor.currentText())
-            attr.SetValue(attr.GetLabelValue(editor.currentText()))
+            text = editor.currentText().strip()
+            label_val = attr.GetLabelValue(text)
+            if label_val is not None:
+                attr.SetValue(label_val)
+                item.setText(text)
+            else:
+                val = _parse_number(text)
+                if val is not None:
+                    attr.SetValue(val)
+                    item.setText(attr.GetLabel())
         else:
             super().setModelData(editor, model, index)
 
