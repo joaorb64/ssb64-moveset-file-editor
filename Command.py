@@ -119,31 +119,27 @@ class HITBOX(BaseCommand):
         out_hex += effect_value  # Effect
 
         output += f'{hex(out_hex)[2:]:0>8}'
-        print(f'{hex(out_hex)[2:]:0>8}')
 
         ''' 8-digit block '''
         out_hex = 0 | (self.size.value << 17)  # Size
         out_hex |= (self.x.GetValue() & 0xFFFF)  # X
 
         output += f'{hex(out_hex)[2:]:0>8}'
-        print(f'{hex(out_hex)[2:]:0>8}')
 
         ''' 8-digit block '''
         out_hex = (self.y.GetValue() << 16) & 0xFFFF0000  # Y
         out_hex |= (self.z.GetValue() & 0xFFFF)  # Z
 
         output += f'{hex(out_hex)[2:]:0>8}'
-        print(f'{hex(out_hex)[2:]:0>8}')
 
         ''' 8-digit block '''
         out_hex = (self.angle.GetValue() << 22) & 0xFFF00000  # Angle
         out_hex += self.knockback_scaling.value << 12  # Knockback Scaling
-        out_hex += self.fixed_knockback.value * 4  # Fixed knocback
+        out_hex += self.fixed_knockback.value * 4  # Fixed knockback
         out_hex += self.hit_grounded_targets.value * 2  # Grounded targets
         out_hex += self.hit_aerial_targets.value  # Aerial targets
 
         output += f'{hex(out_hex)[2:]:0>8}'
-        print(f'{hex(out_hex)[2:]:0>8}')
 
         ''' 8-digit block '''
         out_hex = self.shield_damage.value << 24  # Shield Damage
@@ -154,7 +150,6 @@ class HITBOX(BaseCommand):
         out_hex += ((bkb * 8) << 4)  # Base Knockback
 
         output += f'{hex(out_hex)[2:]:0>8}'
-        print(f'{hex(out_hex)[2:]:0>8}')
 
         return output
 
@@ -301,7 +296,6 @@ class SWORD_TRAIL(BaseCommand):
     def __init__(self, _hex: str):
         super().__init__(_hex)
         self.command = DataType.SWORD_TRAIL(get_hex(_hex, 1, 3))
-        print("Command:", _hex, get_hex(_hex, 1, 3), self.command.value)
 
     def ToHex(self):
         return self._hex[0:2]+f'{(hex(self.command.value)[2:]):0>6}'
@@ -317,7 +311,7 @@ class SET_FRAME_SPEED_MULTIPLIER(BaseCommand):
     def __init__(self, _hex: str):
         super().__init__(_hex)
         self.speed_flag = DataType.UNSIGNED_INT(bytes.fromhex(_hex[2:4]))
-        # Pega 2 bytes big endian + completa com 2 bytes zeros no final
+        # Read 2 big-endian bytes and pad with 2 zero bytes to form a 4-byte float
         fsm_bytes = bytes.fromhex(_hex[4:8]) + b'\x00\x00'
         self.fsm = DataType.FLOAT32(fsm_bytes)
 

@@ -181,27 +181,27 @@ def LoadRemixStuff():
         buildlog = open("./output.log", 'r').read()
 
         # SFX
-        pattern = re.compile("Added (.*)\nFGM_ID: 0x\w+ \((.*)\)")
+        pattern = re.compile(r"Added (.*)\nFGM_ID: 0x\w+ \((.*)\)")
 
         for match in re.findall(pattern, buildlog):
             SFX.template[match[0]] = int(match[1])
 
         # Damage type
-        pattern = re.compile("Added Damage Type: (\w+) - ID is (\w+)\n")
+        pattern = re.compile(r"Added Damage Type: (\w+) - ID is (\w+)\n")
 
         for match in re.findall(pattern, buildlog):
             EFFECT_TYPE.template[match[0]] = int(match[1], 16)
 
         # GFX
         pattern = re.compile(
-            " - Added GFX_ID (\w+) \(Command ID \w+\) with Instruction ID \w+\): (.*)\n")
+            r" - Added GFX_ID (\w+) \(Command ID \w+\) with Instruction ID \w+\): (.*)\n")
 
         for match in re.findall(pattern, buildlog):
             GFX.template[match[1]] = int(match[0], 16)
 
         # SWORD TRAILS
         pattern = re.compile(
-            "Added Sword Trail: (\w+) - Moveset command is (.*)\n")
+            r"Added Sword Trail: (\w+) - Moveset command is (.*)\n")
 
         for match in re.findall(pattern, buildlog):
             SWORD_TRAIL.template[match[0]] = int(match[1][4:], 16)
