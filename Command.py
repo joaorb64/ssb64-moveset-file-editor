@@ -1,4 +1,3 @@
-import math
 from abc import ABC
 from dataclasses import dataclass
 import DataType
@@ -592,11 +591,13 @@ class PAUSE_SCRIPT(BaseCommand):
 # ── GFX / Effects ─────────────────────────────────────────────────────────────
 
 class GFX(BaseCommand):
-    """Effect — 4 words."""
+    """Effect — 4 words. bone=joint id (7-bit signed), effect=GFX id (9-bit),
+    flags=lower 10 bits, then position (x1,y1,z1) and spread (x2,y2,z2) as 16-bit signed."""
     command_name = "GFX"
     command_size = 32
-    bone: DataType.UNSIGNED_INT
+    bone: DataType.SIGNED_INT
     effect: DataType.GFX
+    flags: DataType.UNSIGNED_INT
     x1: DataType.SIGNED_INT
     y1: DataType.SIGNED_INT
     z1: DataType.SIGNED_INT
@@ -606,18 +607,27 @@ class GFX(BaseCommand):
 
     def __init__(self, _hex: str):
         super().__init__(_hex)
-        self.bone = DataType.UNSIGNED_INT(math.floor(get_hex(_hex, 1) / 8))
-        self.effect = DataType.GFX((int(_hex[3:6], 16) % 2048) / 4)
-        self.x1 = DataType.SIGNED_INT(int(_hex[8:12], 16))
-        self.y1 = DataType.SIGNED_INT(int(_hex[12:16], 16))
-        self.z1 = DataType.SIGNED_INT(int(_hex[16:20], 16))
-        self.x2 = DataType.SIGNED_INT(int(_hex[20:24], 16))
-        self.y2 = DataType.SIGNED_INT(int(_hex[24:28], 16))
-        self.z2 = DataType.SIGNED_INT(int(_hex[28:32], 16))
+        w1 = get_word(_hex, 0)
+        w2 = get_word(_hex, 1)
+        w3 = get_word(_hex, 2)
+        w4 = get_word(_hex, 3)
+        self.bone   = DataType.SIGNED_INT(sx((w1 >> 19) & 0x7F, 7))
+        self.effect = DataType.GFX((w1 >> 10) & 0x1FF)
+        self.flags  = DataType.UNSIGNED_INT(w1 & 0x3FF)
+        self.x1 = DataType.SIGNED_INT(sx((w2 >> 16) & 0xFFFF, 16))
+        self.y1 = DataType.SIGNED_INT(sx(w2 & 0xFFFF, 16))
+        self.z1 = DataType.SIGNED_INT(sx((w3 >> 16) & 0xFFFF, 16))
+        self.x2 = DataType.SIGNED_INT(sx(w3 & 0xFFFF, 16))
+        self.y2 = DataType.SIGNED_INT(sx((w4 >> 16) & 0xFFFF, 16))
+        self.z2 = DataType.SIGNED_INT(sx(w4 & 0xFFFF, 16))
 
     def ToHex(self):
-        # TODO: reconstruct from fields; returning raw hex for now
-        return self._hex
+        opc = _opcode(self._hex)
+        w1 = (opc << 26) | ((self.bone.GetValue() & 0x7F) << 19) | (self.effect.value << 10) | (self.flags.value & 0x3FF)
+        w2 = ((self.x1.GetValue() & 0xFFFF) << 16) | (self.y1.GetValue() & 0xFFFF)
+        w3 = ((self.z1.GetValue() & 0xFFFF) << 16) | (self.x2.GetValue() & 0xFFFF)
+        w4 = ((self.y2.GetValue() & 0xFFFF) << 16) | (self.z2.GetValue() & 0xFFFF)
+        return f'{w1:08X}{w2:08X}{w3:08X}{w4:08X}'
 
 
 class GFX_ITEM(GFX):
@@ -800,24 +810,55 @@ class SET_FRAME_SPEED_MULTIPLIER(BaseCommand):
         return self._hex[0:2] + sf_hex + fsm_hex
 
 
-class _HitboxMultiplier(BaseCommand):
-    """Base for DD/DE: DDXYZZZZ — X=apply_all bool, Y=hitbox_id (0–3), ZZZZ=upper float bytes."""
+# ── Remix commands ────────────────────────────────────────────────────────────
+# Shared helper: upper-float commands (CC 00 XXXX  where XXXX = upper 2 bytes of float32)
+
+class _UpperFloat(BaseCommand):
     command_size = 8
-    apply_all: DataType.UNSIGNED_INT
+    value: DataType.FLOAT32
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.value = DataType.FLOAT32(bytes.fromhex(_hex[4:8]) + b'\x00\x00')
+
+    def ToHex(self):
+        return self._hex[0:2] + '00' + self.value.ToBytes()[:2].hex().upper()
+
+
+class SET_ARMOR(_UpperFloat):
+    """D1 00 XXXX — armour value (upper float)."""
+    command_name = "Set Armor (Remix)"
+
+
+class TOPJOINT_TRANSLATION_MULTI(_UpperFloat):
+    """D3 00 XXXX — topjoint translation multiplier (upper float)."""
+    command_name = "Topjoint Translation Multiplier (Remix)"
+
+
+class SET_Y_VEL(_UpperFloat):
+    """D4 00 XXXX — aerial Y velocity (upper float)."""
+    command_name = "Set Y Velocity (Remix)"
+
+
+# ── Hitbox multipliers (DD / DE) ──────────────────────────────────────────────
+# CCXYZZZZ  X=apply_all bool, Y=hitbox_id 0-3, ZZZZ=multiplier upper float
+
+class _HitboxMultiplier(BaseCommand):
+    command_size = 8
+    apply_all: DataType.BOOL_TOGGLE
     hitbox_id: DataType.UNSIGNED_INT
     multiplier: DataType.FLOAT32
 
     def __init__(self, _hex: str):
         super().__init__(_hex)
         xy = int(_hex[2:4], 16)
-        self.apply_all = DataType.UNSIGNED_INT((xy >> 4) & 0xF)
+        self.apply_all = DataType.BOOL_TOGGLE((xy >> 4) & 0xF)
         self.hitbox_id = DataType.UNSIGNED_INT(xy & 0xF)
         self.multiplier = DataType.FLOAT32(bytes.fromhex(_hex[4:8]) + b'\x00\x00')
 
     def ToHex(self):
         xy = ((self.apply_all.value & 0xF) << 4) | (self.hitbox_id.value & 0xF)
-        mult_hex = self.multiplier.ToBytes()[:2].hex().upper()
-        return self._hex[0:2] + f'{xy:02X}' + mult_hex
+        return self._hex[0:2] + f'{xy:02X}' + self.multiplier.ToBytes()[:2].hex().upper()
 
 
 class SET_HITBOX_HITLAG_MULT(_HitboxMultiplier):
@@ -828,57 +869,146 @@ class SET_HITBOX_DI_MULT(_HitboxMultiplier):
     command_name = "Set Hitbox DI Multiplier (Remix)"
 
 
-class _REMIX_STUB(BaseCommand):
-    """Unimplemented Remix command — round-trips raw bytes."""
+# ── Remaining Remix commands ──────────────────────────────────────────────────
+
+class OVERRIDE_HITBOX_DIRECTION(BaseCommand):
+    """D2 00 XX YY — XX=hitbox_id (0-3), YY=direction override."""
+    command_name = "Override Hitbox Direction (Remix)"
+    command_size = 8
+    hitbox_id: DataType.UNSIGNED_INT
+    direction: DataType.HITBOX_DIR_OVERRIDE
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.hitbox_id = DataType.UNSIGNED_INT(int(_hex[4:6], 16))
+        self.direction = DataType.HITBOX_DIR_OVERRIDE(int(_hex[6:8], 16))
+
+    def ToHex(self):
+        return self._hex[0:2] + '00' + f'{self.hitbox_id.value:02X}{self.direction.value:02X}'
+
+
+class FAST_FALL(BaseCommand):
+    """D5 00 00 XX — XX=0 off, 1 on."""
+    command_name = "Fast Fall (Remix)"
+    command_size = 8
+    enabled: DataType.BOOL_TOGGLE
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.enabled = DataType.BOOL_TOGGLE(int(_hex[6:8], 16))
+
+    def ToHex(self):
+        return self._hex[0:2] + '0000' + f'{self.enabled.value:02X}'
+
+
+class RANDOM_SFX(BaseCommand):
+    """D6 XX YY ZZ / AAAAAAAA — chance, sfx_type, array_size, pointer. (2 words)"""
+    command_name = "Random SFX (Remix)"
+    command_size = 16
+    chance: DataType.UNSIGNED_INT
+    sfx_type: DataType.SFX_PLAY_TYPE
+    array_size: DataType.UNSIGNED_INT
+    pointer: DataType.UNSIGNED_INT
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.chance     = DataType.UNSIGNED_INT(int(_hex[2:4], 16))
+        self.sfx_type   = DataType.SFX_PLAY_TYPE(int(_hex[4:6], 16))
+        self.array_size = DataType.UNSIGNED_INT(int(_hex[6:8], 16))
+        self.pointer    = DataType.UNSIGNED_INT(int(_hex[8:16], 16))
+
+    def ToHex(self):
+        return (self._hex[0:2]
+                + f'{self.chance.value:02X}{self.sfx_type.value:02X}{self.array_size.value:02X}'
+                + f'{self.pointer.value:08X}')
+
+
+class SET_KINETIC_STATE(BaseCommand):
+    """D7 00 00 XX — XX=0 grounded, 1 aerial."""
+    command_name = "Set Kinetic State (Remix)"
+    command_size = 8
+    state: DataType.KINETIC_STATE
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.state = DataType.KINETIC_STATE(int(_hex[6:8], 16))
+
+    def ToHex(self):
+        return self._hex[0:2] + '0000' + f'{self.state.value:02X}'
+
+
+class SET_HITBOX_FGM(BaseCommand):
+    """D8 XY ZZZZ — X=apply_all, Y=hitbox_id, ZZZZ=fgm_id (high bit=play both)."""
+    command_name = "Set Hitbox FGM (Remix)"
+    command_size = 8
+    apply_all: DataType.BOOL_TOGGLE
+    hitbox_id: DataType.UNSIGNED_INT
+    fgm_id: DataType.SFX
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        xy = int(_hex[2:4], 16)
+        self.apply_all = DataType.BOOL_TOGGLE((xy >> 4) & 0xF)
+        self.hitbox_id = DataType.UNSIGNED_INT(xy & 0xF)
+        self.fgm_id    = DataType.SFX(int(_hex[4:8], 16))
+
+    def ToHex(self):
+        xy = ((self.apply_all.value & 0xF) << 4) | (self.hitbox_id.value & 0xF)
+        return self._hex[0:2] + f'{xy:02X}' + f'{self.fgm_id.value:04X}'
+
+
+class SET_ENV_COLOR(BaseCommand):
+    """D9 00 00 00 / XXXXXXXX — env color as 32-bit RGBA. (2 words)"""
+    command_name = "Set Env Color (Remix)"
+    command_size = 16
+    color: DataType.UNSIGNED_INT
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.color = DataType.UNSIGNED_INT(int(_hex[8:16], 16))
+
+    def ToHex(self):
+        return self._hex[0:2] + '000000' + f'{self.color.value:08X}'
+
+
+class SWITCH_DIRECTION(BaseCommand):
+    """DA 00 00 00 — flips the character's facing direction, no parameters."""
+    command_name = "Switch Direction (Remix)"
     command_size = 8
 
-
-class SET_ARMOR(_REMIX_STUB):
-    command_name = "Set Armor (Remix)"
-
-
-class OVERRIDE_HITBOX_DIRECTION(_REMIX_STUB):
-    command_name = "Override Hitbox Direction (Remix)"
+    def ToHex(self):
+        return self._hex[0:2] + '000000'
 
 
-class TOPJOINT_TRANSLATION_MULTI(_REMIX_STUB):
-    command_name = "Topjoint Translation Multi (Remix)"
-
-
-class SET_Y_VEL(_REMIX_STUB):
-    command_name = "Set Y Velocity (Remix)"
-
-
-class FAST_FALL(_REMIX_STUB):
-    command_name = "Fast Fall (Remix)"
-
-
-class RANDOM_SFX(_REMIX_STUB):
-    command_name = "Random SFX (Remix)"
-
-
-class SET_KINETIC_STATE(_REMIX_STUB):
-    command_name = "Set Kinetic State (Remix)"
-
-
-class SET_HITBOX_FGM(_REMIX_STUB):
-    command_name = "Set Hitbox FGM (Remix)"
-
-
-class SET_ENV_COLOR(_REMIX_STUB):
-    command_name = "Set Env Color (Remix)"
-
-
-class SWITCH_DIRECTION(_REMIX_STUB):
-    command_name = "Switch Direction (Remix)"
-
-
-class GO_TO_MOVESET_FILE(_REMIX_STUB):
+class GO_TO_MOVESET_FILE(BaseCommand):
+    """DB 00 XXXX — jump to word offset XXXX in the parent moveset file."""
     command_name = "Go To Moveset File (Remix)"
+    command_size = 8
+    offset: DataType.UNSIGNED_INT
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.offset = DataType.UNSIGNED_INT(int(_hex[4:8], 16))
+
+    def ToHex(self):
+        return self._hex[0:2] + '00' + f'{self.offset.value:04X}'
 
 
-class L_VOICE_SFX(_REMIX_STUB):
+class L_VOICE_SFX(BaseCommand):
+    """DC 00 AAAA / 0000 BBBB — AAAA=normal sfx, BBBB=alternate if L held. (2 words)"""
     command_name = "L Voice SFX (Remix)"
+    command_size = 16
+    sfx: DataType.SFX
+    alt_sfx: DataType.SFX
+
+    def __init__(self, _hex: str):
+        super().__init__(_hex)
+        self.sfx     = DataType.SFX(int(_hex[4:8], 16))
+        self.alt_sfx = DataType.SFX(int(_hex[12:16], 16))
+
+    def ToHex(self):
+        return (self._hex[0:2] + '00' + f'{self.sfx.value:04X}'
+                + '0000' + f'{self.alt_sfx.value:04X}')
 
 
 # ── Unknown ───────────────────────────────────────────────────────────────────

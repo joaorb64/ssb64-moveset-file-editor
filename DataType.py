@@ -176,6 +176,22 @@ class GFX(UNSIGNED_INT):
     }
 
 
+class BOOL_TOGGLE(UNSIGNED_INT):
+    template = {"Off": 0, "On": 1}
+
+
+class KINETIC_STATE(UNSIGNED_INT):
+    template = {"Grounded": 0, "Aerial": 1}
+
+
+class HITBOX_DIR_OVERRIDE(UNSIGNED_INT):
+    template = {"No Override": 0, "Force Forward": 1, "Force Backward": 2}
+
+
+class SFX_PLAY_TYPE(UNSIGNED_INT):
+    template = {"SFX": 0, "Voice FX": 1}
+
+
 def LoadRemixStuff():
     try:
         buildlog = open("./output.log", 'r').read()

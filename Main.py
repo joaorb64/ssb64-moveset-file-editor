@@ -36,17 +36,39 @@ SELECTED_FG = "#ffffff"
 
 # Short field names to show in tree parent row and tooltip header.
 SUMMARY_FIELDS = {
-    "HITBOX":                    ["damage", "angle"],
-    "WAIT":                      ["time"],
-    "AFTER":                     ["time"],
-    "LOOP_START":                ["iterations"],
-    "PLAY_SFX":                  ["sfx"],
-    "VOICE_SFX":                 ["sfx"],
-    "GFX":                       ["effect"],
-    "SWORD_TRAIL":               ["command"],
-    "SET_SLOPE_CONTOUR_STATE":   ["state"],
-    "SET_SPECIFIC_HURTBOX_STATE": ["part", "state"],
-    "SET_FRAME_SPEED_MULTIPLIER": ["fsm"],
+    "HITBOX":                        ["damage", "angle"],
+    "WAIT":                          ["time"],
+    "AFTER":                         ["time"],
+    "LOOP_START":                    ["iterations"],
+    "PLAY_SFX":                      ["sfx"],
+    "PLAY_FGM_STORE":                ["sfx"],
+    "VOICE_SFX":                     ["sfx"],
+    "PLAY_LOOP_SFX":                 ["sfx"],
+    "PLAY_LOOP_VOICE":               ["sfx"],
+    "SMASH_VOICE":                   ["sfx"],
+    "GFX":                           ["effect", "bone"],
+    "GFX_ITEM":                      ["effect", "bone"],
+    "SWORD_TRAIL":                   ["command"],
+    "SET_SLOPE_CONTOUR_STATE":       ["state"],
+    "SET_SPECIFIC_HURTBOX_STATE":    ["part", "state"],
+    "SET_ALL_HURTBOX_STATE":         ["state"],
+    "SET_HURTBOX_STATE":             ["state"],
+    "CLEAR_HITBOX":                  ["hitbox_id"],
+    "SET_HITBOX_DAMAGE":             ["attack_id", "damage"],
+    "SET_HITBOX_SIZE":               ["attack_id", "size"],
+    "SET_FRAME_SPEED_MULTIPLIER":    ["fsm"],
+    "SET_ARMOR":                     ["value"],
+    "TOPJOINT_TRANSLATION_MULTI":    ["value"],
+    "SET_Y_VEL":                     ["value"],
+    "FAST_FALL":                     ["enabled"],
+    "SET_KINETIC_STATE":             ["state"],
+    "SET_HITBOX_FGM":                ["hitbox_id", "fgm_id"],
+    "SET_HITBOX_HITLAG_MULT":        ["hitbox_id", "multiplier"],
+    "SET_HITBOX_DI_MULT":            ["hitbox_id", "multiplier"],
+    "OVERRIDE_HITBOX_DIRECTION":     ["hitbox_id", "direction"],
+    "GO_TO_MOVESET_FILE":            ["offset"],
+    "L_VOICE_SFX":                   ["sfx", "alt_sfx"],
+    "RANDOM_SFX":                    ["chance", "sfx_type"],
 }
 
 
@@ -169,6 +191,8 @@ class CustomDelegate(QItemDelegate):
     def setModelData(self, editor, model, index):
         item = index.model().itemFromIndex(index)
         attr = item.data(Qt.UserRole)
+        if attr is None:
+            return
 
         if isinstance(editor, QSpinBox):
             attr.SetValue(editor.value())
