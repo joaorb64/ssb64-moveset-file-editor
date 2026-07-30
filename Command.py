@@ -671,16 +671,19 @@ class HIDE_MODEL_ALL(BaseCommand):
 
 
 class SET_TEXTURE_PART(BaseCommand):
+    """ACY00XX — Y=body part (1 hex digit), XX=texture index (last 2 hex digits)."""
     command_name = "Set Texture Part"
     command_size = 8
-    value: DataType.UNSIGNED_INT
+    part: DataType.UNSIGNED_INT
+    index: DataType.UNSIGNED_INT
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.value = DataType.UNSIGNED_INT(get_word(_hex) & 0x3FFFFFF)
+        self.part = DataType.UNSIGNED_INT(int(_hex[2:3], 16))
+        self.index = DataType.UNSIGNED_INT(int(_hex[6:8], 16))
 
     def ToHex(self):
-        return _w1(43, self.value.value)
+        return self._hex[0:2] + f'{self.part.value:01X}' + '000' + f'{self.index.value:02X}'
 
 
 class SET_COL_ANIM(BaseCommand):

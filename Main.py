@@ -69,6 +69,7 @@ SUMMARY_FIELDS = {
     "GO_TO_MOVESET_FILE":            ["offset"],
     "L_VOICE_SFX":                   ["sfx", "alt_sfx"],
     "RANDOM_SFX":                    ["chance", "sfx_type"],
+    "SET_TEXTURE_PART":              ["part", "index"],
 }
 
 
@@ -338,7 +339,7 @@ class BinaryFileViewer(QMainWindow):
         self.binary_text.editingFinished.connect(lambda: self._refresh_hex_display())
         self.binary_text.command_hovered.connect(self.show_command_tooltip)
         self.binary_text.command_clicked.connect(self.on_hex_command_clicked)
-        self.tree.model().dataChanged.connect(self.export_data)
+        self.tree.model().dataChanged.connect(self.on_tree_data_changed)
         self.tree.selectionModel().selectionChanged.connect(self.on_tree_selection_changed)
 
         self.binary_text.setPlainText(
@@ -442,6 +443,23 @@ class BinaryFileViewer(QMainWindow):
             if item and item.data():
                 self.commands.append(item.data())
         self._refresh_hex_display()
+
+    def on_tree_data_changed(self, topLeft, bottomRight, roles=None):
+        if self._updating:
+            return
+        self.export_data()
+        row = topLeft.parent().row() if topLeft.parent().isValid() else topLeft.row()
+        self._update_parent_label(row)
+
+    def _update_parent_label(self, row: int):
+        item = self.tree.model().item(row, 0)
+        if not item:
+            return
+        comm = item.data()
+        if comm is None:
+            return
+        summary = get_command_summary(comm)
+        item.setText(f"{comm._hex[0:2].upper()}  {comm.command_name}{summary}")
 
     # ── Tooltip ───────────────────────────────────────────────────────
 
