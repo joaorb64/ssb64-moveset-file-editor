@@ -1,3 +1,4 @@
+import os
 import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -6,10 +7,10 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QToolTip, QStyle, QFrame,
 )
 from PySide6.QtGui import (
-    QIcon, QAction, QStandardItem, QStandardItemModel,
+    QIcon, QAction, QStandardItem, QStandardItemModel, QKeySequence, QShortcut,
     QFontDatabase, QTextCursor, QTextOption, QCursor, QBrush, QColor,
 )
-from PySide6.QtCore import Qt, Signal, QItemSelectionModel, QLocale, QEvent
+from PySide6.QtCore import Qt, Signal, QItemSelectionModel, QLocale, QEvent, QSettings
 
 QLocale.setDefault(QLocale(QLocale.C))
 
@@ -73,11 +74,55 @@ SUMMARY_FIELDS = {
 }
 
 
+# LOOP_START/LOOP_END get a fixed accent instead of the auto-assigned palette
+# color, so loop boundaries stand out in both the tree and the hex view.
+_LOOP_COLORS = ("#7a5c00", "#ffe9a8")
+
+
 def get_command_color(cmd) -> tuple:
     key = type(cmd).__name__
+    if key in ("LOOP_START", "LOOP_END"):
+        return _LOOP_COLORS
     if key not in _type_color_cache:
         _type_color_cache[key] = _COLOR_PALETTE[len(_type_color_cache) % len(_COLOR_PALETTE)]
     return _type_color_cache[key]
+
+
+def compute_layout(commands: List["Command.BaseCommand"]):
+    """Walk the flat command list and compute, per top-level command:
+    - the frame number it executes on (first pass through any loop body),
+      advanced by WAIT/AFTER and multiplied by LOOP_START's iteration count
+      once its matching LOOP_END is reached;
+    - its loop nesting depth (LOOP_START/LOOP_END sit at their loop's
+      enclosing depth; everything between them is one level deeper).
+    """
+    frames: List[int] = []
+    depths: List[int] = []
+    running = 0
+    depth = 0
+    loop_stack = []  # (iterations, frame_at_loop_start)
+    for cmd in commands:
+        closes_loop = isinstance(cmd, Command.LOOP_END) and loop_stack
+        if closes_loop:
+            depth -= 1
+        depths.append(depth)
+        frames.append(running)
+        if isinstance(cmd, (Command.WAIT, Command.AFTER)):
+            running += cmd.time.value
+        elif isinstance(cmd, Command.LOOP_START):
+            loop_stack.append((cmd.iterations.value, running))
+            depth += 1
+        elif closes_loop:
+            iterations, start_frame = loop_stack.pop()
+            running = start_frame + (running - start_frame) * iterations
+    return frames, depths
+
+
+def format_command_label(comm, frame: int = None, depth: int = 0) -> str:
+    summary = get_command_summary(comm)
+    indent = "    " * depth
+    frame_str = f"F{frame:<5}" if frame is not None else ""
+    return f"{frame_str}{indent}{comm._hex[0:2].upper()}  {comm.command_name}{summary}"
 
 
 def get_command_summary(cmd) -> str:
@@ -93,6 +138,7 @@ def get_command_summary(cmd) -> str:
 
 class HexTextEdit(QTextEdit):
     editingFinished = Signal()
+    editingStarted = Signal()
     command_hovered = Signal(int)
     command_clicked = Signal(int)
 
@@ -123,6 +169,7 @@ class HexTextEdit(QTextEdit):
 
     def focusInEvent(self, event):
         super().focusInEvent(event)
+        self.editingStarted.emit()
         self.display_mode = False
         raw = ''.join(c for c in self.toPlainText() if c in '0123456789abcdefABCDEF').upper()
         # Show with a space every 8 chars for readability; _get_raw_hex strips them back out
@@ -239,6 +286,11 @@ class BinaryFileViewer(QMainWindow):
         super().__init__()
         self.commands: List[Command.BaseCommand] = []
         self._updating = False
+        self.undo_stack: List[str] = []
+        self.redo_stack: List[str] = []
+        self.current_file_path: str | None = None
+        self.settings = QSettings()
+        self.last_directory = self.settings.value("last_directory", os.path.expanduser("~"))
         self.initUI()
 
     def initUI(self):
@@ -252,6 +304,10 @@ class BinaryFileViewer(QMainWindow):
         # ── Hex viewer ──────────────────────────────────────────────
         self.binary_text = HexTextEdit(self)
         self.binary_text.setAcceptRichText(True)
+        # This widget's own undo/redo would otherwise swallow Ctrl+Z/Ctrl+Y
+        # before our app-level undo (which operates on the whole command list,
+        # not text edits) ever sees them.
+        self.binary_text.setUndoRedoEnabled(False)
         self.binary_text.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self.binary_text.setMinimumWidth(300)
         self.binary_text.setMaximumWidth(460)
@@ -299,10 +355,13 @@ class BinaryFileViewer(QMainWindow):
         layout.addWidget(self.toolcol)
 
         sp = QStyle.StandardPixmap
-        add_button    = _sidebar_button("Add",    "Add command after selection",  sp.SP_FileDialogNewFolder)
-        delete_button = _sidebar_button("Delete", "Delete selected command",      sp.SP_TrashIcon)
-        move_up_btn   = _sidebar_button("Up",     "Move selected command up",     sp.SP_ArrowUp)
-        move_dn_btn   = _sidebar_button("Down",   "Move selected command down",   sp.SP_ArrowDown)
+        add_button       = _sidebar_button("Add",       "Add command after selection",  sp.SP_FileDialogNewFolder)
+        duplicate_button = _sidebar_button("Duplicate", "Duplicate selected command",    sp.SP_FileDialogDetailedView)
+        delete_button    = _sidebar_button("Delete",    "Delete selected command",       sp.SP_TrashIcon)
+        move_up_btn      = _sidebar_button("Up",        "Move selected command up",      sp.SP_ArrowUp)
+        move_dn_btn      = _sidebar_button("Down",      "Move selected command down",    sp.SP_ArrowDown)
+        self.undo_btn    = _sidebar_button("Undo",      "Undo last change",              sp.SP_ArrowBack)
+        self.redo_btn    = _sidebar_button("Redo",      "Redo last undone change",       sp.SP_ArrowForward)
 
         submenu = QMenu(self)
         for comm_code, comm_class in Command.COMMANDS.items():
@@ -312,11 +371,22 @@ class BinaryFileViewer(QMainWindow):
             submenu.addAction(act)
         add_button.setMenu(submenu)
 
+        duplicate_button.clicked.connect(self.duplicate_selected_command)
         delete_button.clicked.connect(self.delete_selected_command)
         move_up_btn.clicked.connect(self.move_command_up)
         move_dn_btn.clicked.connect(self.move_command_down)
+        self.undo_btn.clicked.connect(self.undo)
+        self.redo_btn.clicked.connect(self.redo)
+        self.undo_btn.setEnabled(False)
+        self.redo_btn.setEnabled(False)
 
-        for btn in (add_button, delete_button, move_up_btn, move_dn_btn):
+        # Only fires when the tree itself has focus (not an inline field editor),
+        # so pressing Delete while editing a value still deletes text as normal.
+        delete_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), self.tree)
+        delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete_shortcut.activated.connect(self.delete_selected_command)
+
+        for btn in (add_button, duplicate_button, delete_button, move_up_btn, move_dn_btn):
             tool_layout.addWidget(btn)
 
         sep = QFrame()
@@ -324,19 +394,44 @@ class BinaryFileViewer(QMainWindow):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         tool_layout.addWidget(sep)
 
+        for btn in (self.undo_btn, self.redo_btn):
+            tool_layout.addWidget(btn)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        tool_layout.addWidget(sep2)
+
         # ── Menu bar ─────────────────────────────────────────────────
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
         open_action = QAction("Open", self)
+        open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
         save_action = QAction("Save", self)
+        save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self.save_file)
         file_menu.addAction(save_action)
+        save_as_action = QAction("Save As...", self)
+        save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
+        save_as_action.triggered.connect(self.save_file_as)
+        file_menu.addAction(save_as_action)
+
+        edit_menu = menubar.addMenu("Edit")
+        undo_action = QAction("Undo", self)
+        undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        undo_action.triggered.connect(self.undo)
+        edit_menu.addAction(undo_action)
+        redo_action = QAction("Redo", self)
+        redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        redo_action.triggered.connect(self.redo)
+        edit_menu.addAction(redo_action)
 
         # ── Signal wiring ────────────────────────────────────────────
         self.binary_text.textChanged.connect(self.update_decoded_data)
         self.binary_text.editingFinished.connect(lambda: self._refresh_hex_display())
+        self.binary_text.editingStarted.connect(self._push_undo)
         self.binary_text.command_hovered.connect(self.show_command_tooltip)
         self.binary_text.command_clicked.connect(self.on_hex_command_clicked)
         self.tree.model().dataChanged.connect(self.on_tree_data_changed)
@@ -386,10 +481,9 @@ class BinaryFileViewer(QMainWindow):
         self.binary_text.setHtml(html)
         self.binary_text.blockSignals(False)
 
-    def _build_tree_item(self, comm: Command.BaseCommand) -> QStandardItem:
+    def _build_tree_item(self, comm: Command.BaseCommand, frame: int = None, depth: int = 0) -> QStandardItem:
         bg, fg = get_command_color(comm)
-        summary = get_command_summary(comm)
-        label = f"{comm._hex[0:2].upper()}  {comm.command_name}{summary}"
+        label = format_command_label(comm, frame, depth)
         parent = QStandardItem(label)
         parent.setFlags(Qt.ItemFlag.NoItemFlags | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         parent.setBackground(QBrush(QColor(bg)))
@@ -423,8 +517,9 @@ class BinaryFileViewer(QMainWindow):
             self.tree.model().clear()
             self.tree.model().setHorizontalHeaderLabels(["Command", "Value"])
             self.commands = BinaryFileViewer.parse_moveset_file(binary_data)
-            for comm in self.commands:
-                self.tree.model().appendRow(self._build_tree_item(comm))
+            frames, depths = compute_layout(self.commands)
+            for comm, frame, depth in zip(self.commands, frames, depths):
+                self.tree.model().appendRow(self._build_tree_item(comm, frame, depth))
             self.tree.resizeColumnToContents(0)
         except Exception:
             traceback.print_exc()
@@ -442,24 +537,62 @@ class BinaryFileViewer(QMainWindow):
             item = self.tree.model().item(row, 0)
             if item and item.data():
                 self.commands.append(item.data())
+        self._refresh_command_labels()
         self._refresh_hex_display()
+
+    def _refresh_command_labels(self):
+        """Recompute frame numbers and loop depth for every top-level row.
+        Needed on any edit, since a WAIT/LOOP change shifts everything after it.
+        Blocks model signals: setText() on an item already in the model fires
+        dataChanged, which would otherwise re-enter on_tree_data_changed."""
+        frames, depths = compute_layout(self.commands)
+        model = self.tree.model()
+        model.blockSignals(True)
+        try:
+            for row, (comm, frame, depth) in enumerate(zip(self.commands, frames, depths)):
+                item = model.item(row, 0)
+                if item:
+                    item.setText(format_command_label(comm, frame, depth))
+        finally:
+            model.blockSignals(False)
 
     def on_tree_data_changed(self, topLeft, bottomRight, roles=None):
         if self._updating:
             return
+        self._push_undo()
         self.export_data()
-        row = topLeft.parent().row() if topLeft.parent().isValid() else topLeft.row()
-        self._update_parent_label(row)
 
-    def _update_parent_label(self, row: int):
-        item = self.tree.model().item(row, 0)
-        if not item:
+    # ── Undo / redo ──────────────────────────────────────────────────
+
+    def _push_undo(self):
+        """Snapshot the current state before a mutation. Call this right
+        before the change happens, not after."""
+        if not self.commands:
             return
-        comm = item.data()
-        if comm is None:
+        self.undo_stack.append(self._get_raw_hex())
+        del self.undo_stack[:-100]
+        self.redo_stack.clear()
+        self._update_undo_redo_actions()
+
+    def undo(self):
+        if not self.undo_stack:
             return
-        summary = get_command_summary(comm)
-        item.setText(f"{comm._hex[0:2].upper()}  {comm.command_name}{summary}")
+        self.redo_stack.append(self._get_raw_hex())
+        hex_str = self.undo_stack.pop()
+        self.binary_text.setPlainText(hex_str)
+        self._update_undo_redo_actions()
+
+    def redo(self):
+        if not self.redo_stack:
+            return
+        self.undo_stack.append(self._get_raw_hex())
+        hex_str = self.redo_stack.pop()
+        self.binary_text.setPlainText(hex_str)
+        self._update_undo_redo_actions()
+
+    def _update_undo_redo_actions(self):
+        self.undo_btn.setEnabled(bool(self.undo_stack))
+        self.redo_btn.setEnabled(bool(self.redo_stack))
 
     # ── Tooltip ───────────────────────────────────────────────────────
 
@@ -523,6 +656,8 @@ class BinaryFileViewer(QMainWindow):
             traceback.print_exc()
             return
 
+        self._push_undo()
+
         selected = self.tree.selectionModel().currentIndex()
         if selected.isValid():
             top_row = selected.parent().row() if selected.parent().isValid() else selected.row()
@@ -533,10 +668,30 @@ class BinaryFileViewer(QMainWindow):
         self.tree.model().insertRow(insert_row, [self._build_tree_item(comm)])
         self.export_data()
 
+    def duplicate_selected_command(self):
+        selected = self.tree.selectionModel().currentIndex()
+        if not selected.isValid():
+            return
+        row = selected.parent().row() if selected.parent().isValid() else selected.row()
+        item = self.tree.model().item(row, 0)
+        comm = item.data() if item else None
+        if comm is None:
+            return
+
+        self._push_undo()
+
+        dup = type(comm)(comm.ToHex())
+        self.tree.model().insertRow(row + 1, [self._build_tree_item(dup)])
+        new = self.tree.model().index(row + 1, 0)
+        self.tree.selectionModel().setCurrentIndex(
+            new, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+        self.export_data()
+
     def delete_selected_command(self):
         selected = self.tree.selectionModel().currentIndex()
         if not selected.isValid():
             return
+        self._push_undo()
         row = selected.parent().row() if selected.parent().isValid() else selected.row()
         self.tree.model().removeRow(row)
         self.export_data()
@@ -550,6 +705,7 @@ class BinaryFileViewer(QMainWindow):
         row = idx.row()
         if row <= 0:
             return
+        self._push_undo()
         item = self.tree.model().takeRow(row)[0]
         self.tree.model().insertRow(row - 1, item)
         new = self.tree.model().index(row - 1, 0)
@@ -566,6 +722,7 @@ class BinaryFileViewer(QMainWindow):
         row = idx.row()
         if row >= self.tree.model().rowCount() - 1:
             return
+        self._push_undo()
         item = self.tree.model().takeRow(row)[0]
         self.tree.model().insertRow(row + 1, item)
         new = self.tree.model().index(row + 1, 0)
@@ -575,23 +732,48 @@ class BinaryFileViewer(QMainWindow):
 
     # ── File I/O ──────────────────────────────────────────────────────
 
+    def _remember_directory(self, file_path: str):
+        self.last_directory = os.path.dirname(file_path)
+        self.settings.setValue("last_directory", self.last_directory)
+
+    def _set_current_file(self, file_path: str):
+        self.current_file_path = file_path
+        self._remember_directory(file_path)
+        self.setWindowTitle(f"SSB64 Moveset Editor — {os.path.basename(file_path)}")
+
     def open_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Binary File", "", "Binary Files (*.bin);;All Files (*)")
+            self, "Open Binary File", self.last_directory, "Binary Files (*.bin);;All Files (*)")
         if file_path:
             with open(file_path, "rb") as f:
                 self.binary_text.setPlainText(f.read().hex().upper())
+            self.undo_stack.clear()
+            self.redo_stack.clear()
+            self._update_undo_redo_actions()
+            self._set_current_file(file_path)
 
     def save_file(self):
+        """Save over the currently open file, or prompt if none is open yet."""
+        if self.current_file_path:
+            self._write_hex_to(self.current_file_path)
+        else:
+            self.save_file_as()
+
+    def save_file_as(self):
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Binary File", "", "Binary Files (*.bin);;All Files (*)")
-        if file_path:
-            hex_str = self._get_raw_hex()
-            try:
-                with open(file_path, "wb") as f:
-                    f.write(bytes.fromhex(hex_str))
-            except ValueError as e:
-                QMessageBox.critical(self, "Save Error", f"Invalid hex data: {e}")
+            self, "Save Binary File", self.last_directory, "Binary Files (*.bin);;All Files (*)")
+        if file_path and self._write_hex_to(file_path):
+            self._set_current_file(file_path)
+
+    def _write_hex_to(self, file_path: str) -> bool:
+        hex_str = self._get_raw_hex()
+        try:
+            with open(file_path, "wb") as f:
+                f.write(bytes.fromhex(hex_str))
+            return True
+        except ValueError as e:
+            QMessageBox.critical(self, "Save Error", f"Invalid hex data: {e}")
+            return False
 
     # ── Parser ────────────────────────────────────────────────────────
 
@@ -614,6 +796,8 @@ class BinaryFileViewer(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app.setOrganizationName("ssb64-moveset-editor")
+    app.setApplicationName("MovesetEditor")
     app.setStyleSheet("""
         QToolTip {
             background-color: #1e2030;
