@@ -1,3 +1,7 @@
+# Built application (published via GitHub Releases instead)
+Main.exe
+dist/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
