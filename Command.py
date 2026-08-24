@@ -59,10 +59,10 @@ class WAIT(BaseCommand):
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.time = DataType.UNSIGNED_INT(get_hex(_hex, 2, 2))
+        self.time = DataType.UNSIGNED_INT(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return self._hex[0:2] + f'{self.time.value:06X}'
+        return _w1(1, self.time.value)
 
 
 class AFTER(BaseCommand):
@@ -71,10 +71,10 @@ class AFTER(BaseCommand):
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.time = DataType.UNSIGNED_INT(get_hex(_hex, 2, 2))
+        self.time = DataType.UNSIGNED_INT(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return self._hex[0:2] + f'{self.time.value:06X}'
+        return _w1(2, self.time.value)
 
 
 # ── Hitbox creation ───────────────────────────────────────────────────────────
@@ -157,16 +157,17 @@ class HITBOX(BaseCommand):
 # ── Hitbox modification ───────────────────────────────────────────────────────
 
 class CLEAR_HITBOX(BaseCommand):
+    """ClearAttackCollID — id is the full low 26 bits, not a 3-bit field."""
     command_name = "Delete Hitbox"
     command_size = 8
     hitbox_id: DataType.UNSIGNED_INT
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.hitbox_id = DataType.UNSIGNED_INT((get_word(_hex) >> 23) & 0x7)
+        self.hitbox_id = DataType.UNSIGNED_INT(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return _w1(5, self.hitbox_id.value << 23)
+        return _w1(5, self.hitbox_id.value & 0x3FFFFFF)
 
 
 class END_HITBOX(BaseCommand):
@@ -247,16 +248,17 @@ class SET_HITBOX_SOUND_LEVEL(BaseCommand):
 
 
 class REVIVE_HITBOX(BaseCommand):
+    """RefreshAttackCollID — id is the full low 26 bits, not a 3-bit field."""
     command_name = "Revive Hitbox"
     command_size = 8
     attack_id: DataType.UNSIGNED_INT
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.attack_id = DataType.UNSIGNED_INT((get_word(_hex) >> 23) & 0x7)
+        self.attack_id = DataType.UNSIGNED_INT(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return _w1(11, self.attack_id.value << 23)
+        return _w1(11, self.attack_id.value & 0x3FFFFFF)
 
 
 # ── Throw ─────────────────────────────────────────────────────────────────────
@@ -292,16 +294,17 @@ class THROW_SUBROUTINE(BaseCommand):
 # ── Audio ─────────────────────────────────────────────────────────────────────
 
 class PLAY_SFX(BaseCommand):
+    """PlayFGM."""
     command_name = "Play SFX"
     command_size = 8
     sfx: DataType.SFX
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.sfx = DataType.SFX(get_hex(_hex, 2, 2))
+        self.sfx = DataType.SFX(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return self._hex[0:2] + f'{self.sfx.value:06X}'
+        return _w1(14, self.sfx.value)
 
 
 class PLAY_LOOP_SFX(BaseCommand):
@@ -318,11 +321,17 @@ class PLAY_LOOP_SFX(BaseCommand):
 
 
 class STOP_LOOP_SFX(BaseCommand):
+    """StopLoopSFX — takes the id of the looping SFX to stop, not a bare command."""
     command_name = "Stop Loop SFX"
     command_size = 8
+    sfx: DataType.SFX
+
+    def __init__(self, _hex):
+        super().__init__(_hex)
+        self.sfx = DataType.SFX(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return _w1(16)
+        return _w1(16, self.sfx.value)
 
 
 class VOICE_SFX(BaseCommand):
@@ -332,10 +341,10 @@ class VOICE_SFX(BaseCommand):
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.sfx = DataType.SFX(get_hex(_hex, 2, 2))
+        self.sfx = DataType.SFX(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return self._hex[0:2] + f'{self.sfx.value:06X}'
+        return _w1(17, self.sfx.value)
 
 
 class PLAY_LOOP_VOICE(BaseCommand):
@@ -359,10 +368,10 @@ class PLAY_FGM_STORE(BaseCommand):
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.sfx = DataType.SFX(get_hex(_hex, 2, 2))
+        self.sfx = DataType.SFX(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return self._hex[0:2] + f'{self.sfx.value:06X}'
+        return _w1(19, self.sfx.value)
 
 
 class SMASH_VOICE(BaseCommand):
@@ -528,10 +537,10 @@ class LOOP_START(BaseCommand):
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.iterations = DataType.UNSIGNED_INT(get_hex(_hex, 2, 2))
+        self.iterations = DataType.UNSIGNED_INT(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return self._hex[0:2] + f'{self.iterations.value:06X}'
+        return _w1(32, self.iterations.value)
 
 
 class LOOP_END(BaseCommand):
@@ -734,10 +743,10 @@ class SET_SLOPE_CONTOUR_STATE(BaseCommand):
 
     def __init__(self, _hex):
         super().__init__(_hex)
-        self.state = DataType.CONTOUR_STATE(get_hex(_hex, 2, 2))
+        self.state = DataType.CONTOUR_STATE(get_word(_hex) & 0x3FFFFFF)
 
     def ToHex(self):
-        return self._hex[0:2] + f'{self.state.value:06X}'
+        return _w1(47, self.state.value)
 
 
 class HIDE_ITEM(BaseCommand):

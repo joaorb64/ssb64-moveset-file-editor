@@ -96,11 +96,11 @@ class HURTBOX_STATE(UNSIGNED_INT):
 
 
 class SOUND_LEVEL(UNSIGNED_INT):
+    """GMAttackLevel — only 3 levels exist (nGMHitLevelEnumCount = 3)."""
     template = {
-        "S": 0,
-        "M": 1,
-        "L": 2,
-        "H": 3
+        "WEAK": 0,
+        "MEDIUM": 1,
+        "STRONG": 2
     }
 
 
