@@ -79,6 +79,16 @@ SUMMARY_FIELDS = {
 _LOOP_COLORS = ("#7a5c00", "#ffe9a8")
 
 
+def _dim_color(fg_hex: str, bg_hex: str, t: float = 0.55) -> str:
+    """Blend fg toward bg, for secondary/low-emphasis text like the frame column."""
+    fg = QColor(fg_hex)
+    bg = QColor(bg_hex)
+    r = round(fg.red()   * (1 - t) + bg.red()   * t)
+    g = round(fg.green() * (1 - t) + bg.green() * t)
+    b = round(fg.blue()  * (1 - t) + bg.blue()  * t)
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+
 def get_command_color(cmd) -> tuple:
     key = type(cmd).__name__
     if key in ("LOOP_START", "LOOP_END"):
@@ -95,10 +105,17 @@ def compute_layout(commands: List["Command.BaseCommand"]):
       once its matching LOOP_END is reached;
     - its loop nesting depth (LOOP_START/LOOP_END sit at their loop's
       enclosing depth; everything between them is one level deeper).
+
+    WAIT (SyncWait) is relative: ftmain.c does `script_wait += value`.
+    AFTER (AsyncWait) is absolute: `script_wait = value - anim_frame`, i.e.
+    it jumps straight to frame `value` regardless of the running count — so
+    AFTER's raw value already IS the target frame number as-is, no offset.
+    Frames start counting at 1 (the first frame of the script), matching
+    that same convention.
     """
     frames: List[int] = []
     depths: List[int] = []
-    running = 0
+    running = 1
     depth = 0
     loop_stack = []  # (iterations, frame_at_loop_start)
     for cmd in commands:
@@ -107,8 +124,10 @@ def compute_layout(commands: List["Command.BaseCommand"]):
             depth -= 1
         depths.append(depth)
         frames.append(running)
-        if isinstance(cmd, (Command.WAIT, Command.AFTER)):
+        if isinstance(cmd, Command.WAIT):
             running += cmd.time.value
+        elif isinstance(cmd, Command.AFTER):
+            running = cmd.time.value
         elif isinstance(cmd, Command.LOOP_START):
             loop_stack.append((cmd.iterations.value, running))
             depth += 1
@@ -118,11 +137,15 @@ def compute_layout(commands: List["Command.BaseCommand"]):
     return frames, depths
 
 
-def format_command_label(comm, frame: int = None, depth: int = 0) -> str:
+def format_command_label(comm, depth: int = 0) -> str:
     summary = get_command_summary(comm)
     indent = "    " * depth
-    frame_str = f"F{frame:<5}" if frame is not None else ""
-    return f"{frame_str}{indent}{comm._hex[0:2].upper()}  {comm.command_name}{summary}"
+    return f"{indent}{comm._hex[0:2].upper()}  {comm.command_name}{summary}"
+
+
+def format_frame_label(frame: int = None) -> str:
+    """compute_layout already returns 1-indexed frame numbers; just pad."""
+    return f"{frame:02d}" if frame is not None else ""
 
 
 def get_command_summary(cmd) -> str:
@@ -291,6 +314,7 @@ class BinaryFileViewer(QMainWindow):
         self.current_file_path: str | None = None
         self.settings = QSettings()
         self.last_directory = self.settings.value("last_directory", os.path.expanduser("~"))
+        self.remix_log_path = self.settings.value("remix_log_path", "")
         self.initUI()
 
     def initUI(self):
@@ -344,6 +368,10 @@ class BinaryFileViewer(QMainWindow):
         self.delegate = CustomDelegate()
         self.tree.setItemDelegate(self.delegate)
         self.tree.setUniformRowHeights(False)
+        # Command (column 0) keeps owning the expand/collapse branches and the
+        # field children, regardless of where it's displayed — see
+        # _apply_column_layout(), which moves the Frame column to the front.
+        self.tree.setTreePosition(0)
         tree_layout.addWidget(self.tree)
         layout.addWidget(tree_col)
 
@@ -417,6 +445,10 @@ class BinaryFileViewer(QMainWindow):
         save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         save_as_action.triggered.connect(self.save_file_as)
         file_menu.addAction(save_as_action)
+        file_menu.addSeparator()
+        load_remix_action = QAction("Load Remix Output Log...", self)
+        load_remix_action.triggered.connect(self.load_remix_output_log)
+        file_menu.addAction(load_remix_action)
 
         edit_menu = menubar.addMenu("Edit")
         undo_action = QAction("Undo", self)
@@ -481,14 +513,18 @@ class BinaryFileViewer(QMainWindow):
         self.binary_text.setHtml(html)
         self.binary_text.blockSignals(False)
 
-    def _build_tree_item(self, comm: Command.BaseCommand, frame: int = None, depth: int = 0) -> QStandardItem:
+    def _build_tree_item(self, comm: Command.BaseCommand, frame: int = None, depth: int = 0) -> List[QStandardItem]:
+        """Returns the 3 column items for one top-level command row: [Command,
+        Value (unused at this level), Frame]. Command stays the structural
+        column-0 item that owns the field children (see setTreePosition(0) in
+        initUI) so every existing `.item(row, 0)` lookup keeps working."""
         bg, fg = get_command_color(comm)
-        label = format_command_label(comm, frame, depth)
-        parent = QStandardItem(label)
-        parent.setFlags(Qt.ItemFlag.NoItemFlags | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-        parent.setBackground(QBrush(QColor(bg)))
-        parent.setForeground(QBrush(QColor(fg)))
-        parent.setData(comm)
+
+        cmd_item = QStandardItem(format_command_label(comm, depth))
+        cmd_item.setFlags(Qt.ItemFlag.NoItemFlags | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        cmd_item.setBackground(QBrush(QColor(bg)))
+        cmd_item.setForeground(QBrush(QColor(fg)))
+        cmd_item.setData(comm)
 
         for k, v in comm.__dict__.items():
             if k.startswith('_'):
@@ -502,9 +538,19 @@ class BinaryFileViewer(QMainWindow):
                 child1.setData(v, Qt.ItemDataRole.UserRole)
                 if v.template is not None:
                     child1.setText(v.GetLabel())
-                parent.appendRow([child0, child1])
+                cmd_item.appendRow([child0, child1])
 
-        return parent
+        value_item = QStandardItem("")
+        value_item.setFlags(Qt.ItemFlag.NoItemFlags | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        value_item.setBackground(QBrush(QColor(bg)))
+
+        frame_item = QStandardItem(format_frame_label(frame))
+        frame_item.setFlags(Qt.ItemFlag.NoItemFlags | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        frame_item.setBackground(QBrush(QColor(bg)))
+        frame_item.setForeground(QBrush(QColor(_dim_color(fg, bg))))
+        frame_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        return [cmd_item, value_item, frame_item]
 
     # ── Data flow ─────────────────────────────────────────────────────
 
@@ -515,12 +561,14 @@ class BinaryFileViewer(QMainWindow):
         binary_data = self._get_raw_hex()
         try:
             self.tree.model().clear()
-            self.tree.model().setHorizontalHeaderLabels(["Command", "Value"])
+            self.tree.model().setHorizontalHeaderLabels(["Command", "Value", "Frame"])
             self.commands = BinaryFileViewer.parse_moveset_file(binary_data)
             frames, depths = compute_layout(self.commands)
             for comm, frame, depth in zip(self.commands, frames, depths):
                 self.tree.model().appendRow(self._build_tree_item(comm, frame, depth))
             self.tree.resizeColumnToContents(0)
+            self.tree.resizeColumnToContents(2)
+            self._apply_column_layout()
         except Exception:
             traceback.print_exc()
         finally:
@@ -550,11 +598,23 @@ class BinaryFileViewer(QMainWindow):
         model.blockSignals(True)
         try:
             for row, (comm, frame, depth) in enumerate(zip(self.commands, frames, depths)):
-                item = model.item(row, 0)
-                if item:
-                    item.setText(format_command_label(comm, frame, depth))
+                cmd_item = model.item(row, 0)
+                if cmd_item:
+                    cmd_item.setText(format_command_label(comm, depth))
+                frame_item = model.item(row, 2)
+                if frame_item:
+                    frame_item.setText(format_frame_label(frame))
         finally:
             model.blockSignals(False)
+
+    def _apply_column_layout(self):
+        """Move the Frame column (logical 2) to visual position 0, i.e. the
+        left edge, without disturbing which column (0, Command) structurally
+        owns the tree's branches/children — see setTreePosition(0) above."""
+        header = self.tree.header()
+        visual = header.visualIndex(2)
+        if visual != 0:
+            header.moveSection(visual, 0)
 
     def on_tree_data_changed(self, topLeft, bottomRight, roles=None):
         if self._updating:
@@ -665,7 +725,7 @@ class BinaryFileViewer(QMainWindow):
         else:
             insert_row = self.tree.model().rowCount()
 
-        self.tree.model().insertRow(insert_row, [self._build_tree_item(comm)])
+        self.tree.model().insertRow(insert_row, self._build_tree_item(comm))
         self.export_data()
 
     def duplicate_selected_command(self):
@@ -681,7 +741,7 @@ class BinaryFileViewer(QMainWindow):
         self._push_undo()
 
         dup = type(comm)(comm.ToHex())
-        self.tree.model().insertRow(row + 1, [self._build_tree_item(dup)])
+        self.tree.model().insertRow(row + 1, self._build_tree_item(dup))
         new = self.tree.model().index(row + 1, 0)
         self.tree.selectionModel().setCurrentIndex(
             new, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
@@ -775,6 +835,32 @@ class BinaryFileViewer(QMainWindow):
             QMessageBox.critical(self, "Save Error", f"Invalid hex data: {e}")
             return False
 
+    def _load_remix_data(self, path: str = None) -> bool:
+        """Load extra Remix IDs (SFX, GFX, etc.) from a build output log.
+        Uses the saved path if one was picked before, else falls back to
+        ./output.log for anyone still using the old symlink-in-place setup."""
+        path = path or self.remix_log_path or "./output.log"
+        ok = DataType.LoadRemixStuff(path)
+        if not ok:
+            QMessageBox.warning(
+                self, "Warning",
+                f"Could not read a Remix output log at '{path}'. Build Remix with output "
+                "redirected to a file, then use File → Load Remix Output Log... to point "
+                "the editor at it, to load additional Remix IDs for SFX, GFX, etc."
+            )
+        return ok
+
+    def load_remix_output_log(self):
+        start_dir = os.path.dirname(self.remix_log_path) if self.remix_log_path else self.last_directory
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Remix Output Log", start_dir, "Log Files (*.log);;All Files (*)")
+        if not file_path:
+            return
+        if self._load_remix_data(file_path):
+            self.remix_log_path = file_path
+            self.settings.setValue("remix_log_path", file_path)
+            QMessageBox.information(self, "Remix Data Loaded", f"Loaded Remix IDs from:\n{file_path}")
+
     # ── Parser ────────────────────────────────────────────────────────
 
     @staticmethod
@@ -809,14 +895,7 @@ def main():
     """)
     viewer = BinaryFileViewer()
     viewer.show()
-
-    res = DataType.LoadRemixStuff()
-    if res is False:
-        QMessageBox.warning(
-            viewer, "Warning",
-            "No output.log found. Build Remix with output redirected to a file and place it "
-            "in this program's directory to load additional Remix IDs for SFX, GFX, etc."
-        )
+    viewer._load_remix_data()
 
     sys.exit(app.exec())
 

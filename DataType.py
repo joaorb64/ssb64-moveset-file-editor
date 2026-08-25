@@ -192,9 +192,9 @@ class SFX_PLAY_TYPE(UNSIGNED_INT):
     template = {"SFX": 0, "Voice FX": 1}
 
 
-def LoadRemixStuff():
+def LoadRemixStuff(path="./output.log"):
     try:
-        buildlog = open("./output.log", 'r').read()
+        buildlog = open(path, 'r').read()
 
         # SFX
         pattern = re.compile(r"Added (.*)\nFGM_ID: 0x\w+ \((.*)\)")
@@ -223,6 +223,6 @@ def LoadRemixStuff():
             SWORD_TRAIL.template[match[0]] = int(match[1][4:], 16)
         
         return True
-    except:
-        print("output.log not found")
+    except OSError:
+        print(f"{path} not found")
         return False
