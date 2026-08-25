@@ -98,54 +98,106 @@ def get_command_color(cmd) -> tuple:
     return _type_color_cache[key]
 
 
+# Loops are genuinely simulated pass-by-pass (see _simulate_range) rather than
+# computed with a single-pass-times-iterations shortcut, because that
+# shortcut is wrong whenever a loop body contains AFTER: ftmain.c computes
+# `script_wait = value - anim_frame`, so on the 2nd+ pass through the same
+# AFTER, anim_frame is often already at (or past) the target and the "wait"
+# costs 0 frames — it's only a real delay on the first pass. Simulating for
+# real handles that automatically, for both display and the running total
+# carried past the loop.
+_LOOP_SIM_CAP = 1000    # cap simulated passes per loop; guards against a huge/corrupt iteration count hanging the GUI
+_FRAME_DISPLAY_CAP = 8  # cap how many per-pass frame numbers are shown per row
+
+
+def _find_matching_loop_end(commands, start_idx: int, limit: int) -> int:
+    """Bracket-match: index of the LOOP_END that closes commands[start_idx]
+    (a LOOP_START), searching only within [start_idx, limit)."""
+    depth = 0
+    for j in range(start_idx, limit):
+        if isinstance(commands[j], Command.LOOP_START):
+            depth += 1
+        elif isinstance(commands[j], Command.LOOP_END):
+            depth -= 1
+            if depth == 0:
+                return j
+    return limit - 1  # malformed/unmatched; fall back rather than crash
+
+
+def _simulate_range(commands, start: int, end: int, running: int):
+    """Simulate commands[start:end] once, starting at frame `running`.
+    Returns (frames_by_index, end_running), where frames_by_index maps each
+    visited command's index to the list of frames it executed on (more than
+    one entry when it sits inside a loop that got expanded below it)."""
+    frames_by_index: dict = {}
+    i = start
+    while i < end:
+        cmd = commands[i]
+        frames_by_index.setdefault(i, []).append(running)
+        if isinstance(cmd, Command.WAIT):
+            running += cmd.time.value
+            i += 1
+        elif isinstance(cmd, Command.AFTER):
+            running = cmd.time.value
+            i += 1
+        elif isinstance(cmd, Command.LOOP_START):
+            body_start = i + 1
+            body_end = _find_matching_loop_end(commands, i, end)
+            iterations = min(cmd.iterations.value, _LOOP_SIM_CAP)
+            for _ in range(iterations):
+                sub_frames, running = _simulate_range(commands, body_start, body_end, running)
+                for idx, flist in sub_frames.items():
+                    frames_by_index.setdefault(idx, []).extend(flist)
+                # LOOP_END is the per-pass loop-check; it runs once per pass too
+                frames_by_index.setdefault(body_end, []).append(running)
+            i = body_end + 1
+        else:
+            i += 1
+    return frames_by_index, running
+
+
 def compute_layout(commands: List["Command.BaseCommand"]):
-    """Walk the flat command list and compute, per top-level command:
-    - the frame number it executes on (first pass through any loop body),
-      advanced by WAIT/AFTER and multiplied by LOOP_START's iteration count
-      once its matching LOOP_END is reached;
+    """Compute, per top-level command:
+    - the list of frame numbers it executes on — one entry per pass through
+      any loop(s) it sits inside (a single entry otherwise);
     - its loop nesting depth (LOOP_START/LOOP_END sit at their loop's
       enclosing depth; everything between them is one level deeper).
 
-    WAIT (SyncWait) is relative: ftmain.c does `script_wait += value`.
-    AFTER (AsyncWait) is absolute: `script_wait = value - anim_frame`, i.e.
-    it jumps straight to frame `value` regardless of the running count — so
-    AFTER's raw value already IS the target frame number as-is, no offset.
-    Frames start counting at 1 (the first frame of the script), matching
-    that same convention.
+    Frames start counting at 1 (the first frame of the script). WAIT
+    (SyncWait) is relative (`script_wait += value`); AFTER (AsyncWait) is an
+    absolute jump to frame `value` (`script_wait = value - anim_frame`).
     """
-    frames: List[int] = []
     depths: List[int] = []
-    running = 1
     depth = 0
-    loop_stack = []  # (iterations, frame_at_loop_start)
+    loop_stack = []
     for cmd in commands:
         closes_loop = isinstance(cmd, Command.LOOP_END) and loop_stack
         if closes_loop:
             depth -= 1
+            loop_stack.pop()
         depths.append(depth)
-        frames.append(running)
-        if isinstance(cmd, Command.WAIT):
-            running += cmd.time.value
-        elif isinstance(cmd, Command.AFTER):
-            running = cmd.time.value
-        elif isinstance(cmd, Command.LOOP_START):
-            loop_stack.append((cmd.iterations.value, running))
+        if isinstance(cmd, Command.LOOP_START):
+            loop_stack.append(True)
             depth += 1
-        elif closes_loop:
-            iterations, start_frame = loop_stack.pop()
-            running = start_frame + (running - start_frame) * iterations
-    return frames, depths
+
+    frames_by_index, _ = _simulate_range(commands, 0, len(commands), 1)
+    frame_lists = [frames_by_index.get(i, [1]) for i in range(len(commands))]
+    return frame_lists, depths
 
 
 def format_command_label(comm, depth: int = 0) -> str:
     summary = get_command_summary(comm)
-    indent = "    " * depth
+    indent = "» " * depth
     return f"{indent}{comm._hex[0:2].upper()}  {comm.command_name}{summary}"
 
 
-def format_frame_label(frame: int = None) -> str:
-    """compute_layout already returns 1-indexed frame numbers; just pad."""
-    return f"{frame:02d}" if frame is not None else ""
+def format_frame_label(frames=None) -> str:
+    """compute_layout returns 1-indexed frame numbers per pass; join them,
+    e.g. "11,13,15" for a command inside a 3-iteration loop."""
+    if not frames:
+        return ""
+    shown = ",".join(f"{f:02d}" for f in frames[:_FRAME_DISPLAY_CAP])
+    return shown + "…" if len(frames) > _FRAME_DISPLAY_CAP else shown
 
 
 def get_command_summary(cmd) -> str:
@@ -513,7 +565,7 @@ class BinaryFileViewer(QMainWindow):
         self.binary_text.setHtml(html)
         self.binary_text.blockSignals(False)
 
-    def _build_tree_item(self, comm: Command.BaseCommand, frame: int = None, depth: int = 0) -> List[QStandardItem]:
+    def _build_tree_item(self, comm: Command.BaseCommand, frames: List[int] = None, depth: int = 0) -> List[QStandardItem]:
         """Returns the 3 column items for one top-level command row: [Command,
         Value (unused at this level), Frame]. Command stays the structural
         column-0 item that owns the field children (see setTreePosition(0) in
@@ -544,7 +596,7 @@ class BinaryFileViewer(QMainWindow):
         value_item.setFlags(Qt.ItemFlag.NoItemFlags | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         value_item.setBackground(QBrush(QColor(bg)))
 
-        frame_item = QStandardItem(format_frame_label(frame))
+        frame_item = QStandardItem(format_frame_label(frames))
         frame_item.setFlags(Qt.ItemFlag.NoItemFlags | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         frame_item.setBackground(QBrush(QColor(bg)))
         frame_item.setForeground(QBrush(QColor(_dim_color(fg, bg))))
@@ -563,9 +615,9 @@ class BinaryFileViewer(QMainWindow):
             self.tree.model().clear()
             self.tree.model().setHorizontalHeaderLabels(["Command", "Value", "Frame"])
             self.commands = BinaryFileViewer.parse_moveset_file(binary_data)
-            frames, depths = compute_layout(self.commands)
-            for comm, frame, depth in zip(self.commands, frames, depths):
-                self.tree.model().appendRow(self._build_tree_item(comm, frame, depth))
+            frame_lists, depths = compute_layout(self.commands)
+            for comm, flist, depth in zip(self.commands, frame_lists, depths):
+                self.tree.model().appendRow(self._build_tree_item(comm, flist, depth))
             self.tree.resizeColumnToContents(0)
             self.tree.resizeColumnToContents(2)
             self._apply_column_layout()
@@ -593,17 +645,17 @@ class BinaryFileViewer(QMainWindow):
         Needed on any edit, since a WAIT/LOOP change shifts everything after it.
         Blocks model signals: setText() on an item already in the model fires
         dataChanged, which would otherwise re-enter on_tree_data_changed."""
-        frames, depths = compute_layout(self.commands)
+        frame_lists, depths = compute_layout(self.commands)
         model = self.tree.model()
         model.blockSignals(True)
         try:
-            for row, (comm, frame, depth) in enumerate(zip(self.commands, frames, depths)):
+            for row, (comm, flist, depth) in enumerate(zip(self.commands, frame_lists, depths)):
                 cmd_item = model.item(row, 0)
                 if cmd_item:
                     cmd_item.setText(format_command_label(comm, depth))
                 frame_item = model.item(row, 2)
                 if frame_item:
-                    frame_item.setText(format_frame_label(frame))
+                    frame_item.setText(format_frame_label(flist))
         finally:
             model.blockSignals(False)
 
