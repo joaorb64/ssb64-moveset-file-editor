@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QTreeView, QPushButton, QMenu, QAbstractItemView,
     QItemDelegate, QComboBox, QSpinBox, QDoubleSpinBox,
     QFileDialog, QMessageBox, QToolTip, QStyle, QFrame,
+    QTabWidget, QLabel,
 )
 from PySide6.QtGui import (
     QIcon, QAction, QStandardItem, QStandardItemModel, QKeySequence, QShortcut,
@@ -17,6 +18,7 @@ QLocale.setDefault(QLocale(QLocale.C))
 from typing import List
 import Command
 import DataType
+import ThrowData
 
 
 # Each command type gets a stable color derived from its class name on first use.
@@ -373,8 +375,11 @@ class BinaryFileViewer(QMainWindow):
         self.setGeometry(100, 100, 1200, 720)
         self.setWindowTitle("SSB64 Moveset Editor")
 
-        central_widget = QWidget(self)
-        self.setCentralWidget(central_widget)
+        self.tabs = QTabWidget(self)
+        self.setCentralWidget(self.tabs)
+
+        central_widget = QWidget()
+        self.tabs.addTab(central_widget, "Moveset")
         layout = QHBoxLayout(central_widget)
 
         # ── Hex viewer ──────────────────────────────────────────────
@@ -526,6 +531,112 @@ class BinaryFileViewer(QMainWindow):
             "000000e986400300400f000c81e23000f00032000000005a46400300400f0098004c0000000000ff6a"
             "0000000000004c000029040000051800000000000000"
         )
+
+        self._build_throw_tab()
+
+    def _build_throw_tab(self):
+        """THROWF_DATA.bin / THROWB_DATA.bin editor — a fixed 56-byte struct,
+        unrelated to the moveset command stream, so it gets its own simple
+        tab: two groups of 7 fields (Thrown, Grab Release) instead of a
+        command tree. See ThrowData.py for the file format."""
+        self.throw_data: ThrowData.ThrowDataFile | None = None
+        self.throw_file_path: str | None = None
+
+        throw_widget = QWidget()
+        throw_layout = QVBoxLayout(throw_widget)
+
+        btn_row = QWidget()
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        open_btn = QPushButton("Open...")
+        save_btn = QPushButton("Save")
+        save_as_btn = QPushButton("Save As...")
+        open_btn.clicked.connect(self.open_throw_file)
+        save_btn.clicked.connect(self.save_throw_file)
+        save_as_btn.clicked.connect(self.save_throw_file_as)
+        for b in (open_btn, save_btn, save_as_btn):
+            btn_layout.addWidget(b)
+        btn_layout.addStretch()
+        throw_layout.addWidget(btn_row)
+
+        self.throw_path_label = QLabel("No file open")
+        throw_layout.addWidget(self.throw_path_label)
+
+        self.throw_tree = QTreeView()
+        self.throw_tree.setModel(QStandardItemModel())
+        self.throw_tree.setHeaderHidden(False)
+        self.throw_tree.setItemDelegate(self.delegate)
+        self.throw_tree.setItemsExpandable(False)  # Thrown/Grab Release always stay open
+        throw_layout.addWidget(self.throw_tree)
+
+        self.tabs.addTab(throw_widget, "Throw Data")
+
+    def _populate_throw_tree(self):
+        model = self.throw_tree.model()
+        model.clear()
+        model.setHorizontalHeaderLabels(["Field", "Value"])
+        if self.throw_data is None:
+            return
+
+        for group_name, desc in (("Thrown", self.throw_data.thrown),
+                                  ("Grab Release", self.throw_data.grab_release)):
+            group_item = QStandardItem(group_name)
+            group_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            for field_name, label, _dtype in ThrowData.FIELDS:
+                attr = desc.values[field_name]
+                name_item = QStandardItem(label)
+                name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                value_item = CustomStandardItem(str(attr.value))
+                value_item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
+                value_item.setData(attr, Qt.ItemDataRole.UserRole)
+                if attr.template is not None:
+                    value_item.setText(attr.GetLabel())
+                group_item.appendRow([name_item, value_item])
+            model.appendRow(group_item)
+
+        # Thrown / Grab Release groups always stay open — there are only 2
+        # of them and 7 fields each, no reason to make the user dig for them.
+        self.throw_tree.expandAll()
+        self.throw_tree.resizeColumnToContents(0)
+
+    def open_throw_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open Throw Data", self.last_directory, "Binary Files (*.bin);;All Files (*)")
+        if not file_path:
+            return
+        with open(file_path, "rb") as f:
+            data = f.read()
+        self.throw_data = ThrowData.ThrowDataFile(data.hex().upper())
+        self.throw_file_path = file_path
+        self.throw_path_label.setText(file_path)
+        self._remember_directory(file_path)
+        self._populate_throw_tree()
+
+    def save_throw_file(self):
+        if self.throw_file_path:
+            self._write_throw_to(self.throw_file_path)
+        else:
+            self.save_throw_file_as()
+
+    def save_throw_file_as(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Throw Data", self.last_directory, "Binary Files (*.bin);;All Files (*)")
+        if file_path and self._write_throw_to(file_path):
+            self.throw_file_path = file_path
+            self.throw_path_label.setText(file_path)
+            self._remember_directory(file_path)
+
+    def _write_throw_to(self, file_path: str) -> bool:
+        if self.throw_data is None:
+            return False
+        try:
+            with open(file_path, "wb") as f:
+                f.write(self.throw_data.ToBytes())
+            return True
+        except OSError as e:
+            QMessageBox.critical(self, "Save Error", f"Could not save: {e}")
+            return False
 
     # ── Helpers ───────────────────────────────────────────────────────
 
